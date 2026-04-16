@@ -27,10 +27,10 @@ broker:
     2488:  "DAVE"   # Dave Inc.
 
 hmm:
-  n_candidates: [3, 4, 5, 6, 7]
+  n_candidates: [3, 4]
   n_init: 10
-  covariance_type: "full"
-  min_train_bars: 252
+  covariance_type: "diag"
+  min_train_bars: 126
   stability_bars: 3
   flicker_window: 20
   flicker_threshold: 4
@@ -39,13 +39,13 @@ hmm:
   model_path: "models/hmm_model.pkl"
 
 strategy:
-  low_vol_allocation: 0.95
-  mid_vol_allocation_trend: 0.95
-  mid_vol_allocation_no_trend: 0.60
-  high_vol_allocation: 0.60
-  low_vol_leverage: 1.0
-  rebalance_threshold: 0.10
-  uncertainty_size_mult: 0.50
+  low_vol_allocation: 1.0            # 100% de exposición en baja volatilidad
+  mid_vol_allocation_trend: 1.0      # 100% de exposición si hay tendencia a favor
+  mid_vol_allocation_no_trend: 0.85  # Mantiene 85% expuesto incluso sin tendencia clara (asume rebote)
+  high_vol_allocation: 0.80          # No se asusta en alta volatilidad (baja de 100 a 80 en vez de 60)
+  low_vol_leverage: 1.5              # Usa un 50% de margen/apalancamiento en regímenes ultra seguros
+  rebalance_threshold: 0.15          # Permite 15% de deriva; deja correr a los ganadores antes de rebalancear
+  uncertainty_size_mult: 0.85        # Casi no reduce el tamaño de posición ante incertidumbre probabilística
 
 risk:
   initial_equity: 546.14

@@ -158,10 +158,14 @@ class WalkForwardBacktester:
         common_index = self._common_index(bars_by_symbol, symbols)
         n_total = len(common_index)
 
-        if n_total < self.is_window + self.oos_window:
+        # Calentamiento real = bottleneck de feature engineering:
+        #   dist_sma200 (200) + outer z-score min_periods=126 → ~330 barras
+        warmup_bars = 330
+
+        if n_total < warmup_bars + self.is_window + self.oos_window:
             raise ValueError(
                 f"Datos insuficientes: {n_total} barras. "
-                f"Mínimo requerido: {self.is_window + self.oos_window}."
+                f"Mínimo requerido (Warmup + IS + OOS): {warmup_bars + self.is_window + self.oos_window}."
             )
 
         all_windows : List[WalkForwardResult] = []
@@ -170,15 +174,19 @@ class WalkForwardBacktester:
 
         equity = self.capital
         window_id = 0
-        pos = 0
+        pos = warmup_bars  # Comenzamos el índice después del calentamiento
 
         while pos + self.is_window + self.oos_window <= n_total:
-            is_idx  = common_index[pos : pos + self.is_window]
+            # Extendemos el In-Sample hacia atrás para absorber los NaNs de los features
+            is_idx  = common_index[pos - warmup_bars : pos + self.is_window]
             oos_idx = common_index[pos + self.is_window : pos + self.is_window + self.oos_window]
+
+            # Fecha real en la que la simulación IS empieza a tomar decisiones (para logs)
+            real_is_start = common_index[pos]
 
             logger.info(
                 "Ventana %d — IS: %s→%s | OOS: %s→%s",
-                window_id, is_idx[0].date(), is_idx[-1].date(),
+                window_id, real_is_start.date(), is_idx[-1].date(),
                 oos_idx[0].date(), oos_idx[-1].date(),
             )
 
@@ -235,7 +243,9 @@ class WalkForwardBacktester:
         primary_sym = symbols[0]
 
         features_is = build_features(is_bars[primary_sym])
-        hmm = HMMEngine(n_candidates=self.n_candidates, n_init=10)
+        
+        # Le pasamos explícitamente min_train_bars según la ventana IS configurada
+        hmm = HMMEngine(n_candidates=self.n_candidates, n_init=10, min_train_bars=self.is_window)
         hmm.train(features_is.values)
 
         orchestrator = StrategyOrchestrator(equity=equity_start)

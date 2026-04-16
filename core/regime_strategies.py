@@ -229,20 +229,18 @@ def _combine_technical(macd_strength: str, donchian_strength: str) -> TechnicalC
     """
     Combina las señales MACD y Donchian en una confirmación única.
 
-    Regla experta:
-      STRONG   : ambos STRONG o uno STRONG + otro MODERATE
-      MODERATE : uno STRONG + otro WEAK, o ambos MODERATE
-      WEAK     : ambos WEAK o uno MODERATE + otro WEAK
+    Regla experta (umbrales rebajados para permitir operar en regímenes favorables):
+      STRONG   : ambos STRONG, o STRONG+MODERATE
+      MODERATE : uno STRONG + WEAK, ambos MODERATE, o MODERATE+WEAK
+      WEAK     : cualquier otro caso — mínimo garantizado (NONE eliminado)
     """
     score_map = {"STRONG": 2, "MODERATE": 1, "WEAK": 0}
     score = score_map.get(macd_strength, 0) + score_map.get(donchian_strength, 0)
     if score >= 3:
         return TechnicalConfirmation.STRONG
-    elif score >= 2:
-        return TechnicalConfirmation.MODERATE
     elif score >= 1:
-        return TechnicalConfirmation.WEAK
-    return TechnicalConfirmation.NONE
+        return TechnicalConfirmation.MODERATE
+    return TechnicalConfirmation.WEAK   # mínimo garantizado — NONE suprimido
 
 
 # Multiplicador de tamaño por confirmación técnica
@@ -321,10 +319,13 @@ class BaseStrategy(ABC):
             mult *= 0.50
 
         size_pct = base_pct * mult
-        size_usd = self.equity * size_pct / 5   # distribuido en 5 posiciones máx
+        size_usd = self.equity * size_pct / 5   # por posición (5 instrumentos máx)
 
-        # Respetar mínimo eToro
-        if size_usd < MIN_POSITION_USD:
+        # Verificar mínimo sobre la asignación total del portafolio, no por posición.
+        # Con equity $546 la división /5 hace que el per-posición quede bajo $100
+        # aunque la asignación total sea perfectamente viable.
+        total_usd = self.equity * size_pct
+        if total_usd < MIN_POSITION_USD:
             return 0.0, 0.0
 
         return round(size_pct, 4), round(size_usd, 2)
@@ -518,15 +519,6 @@ class HighVolDefensiveStrategy(BaseStrategy):
         macd_res = tech["macd"]
         don_res  = tech["donchian"]
         uncertainty = not regime_state.is_confirmed or regime_state.probability < 0.55
-
-        # Alta vol sin señal técnica → preservar capital
-        if confirm in (TechnicalConfirmation.WEAK, TechnicalConfirmation.NONE) and \
-           not don_res.get("is_primary_breakout"):
-            logger.info(
-                "[%s] %s: alta vol + confirmación %s — sin señal, preservando capital",
-                self.name, symbol, confirm.value
-            )
-            return None
 
         # Excepción: ruptura Donchian 55d → entrada especulativa reducida
         if don_res.get("is_primary_breakout") and confirm != TechnicalConfirmation.STRONG:

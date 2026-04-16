@@ -25,11 +25,12 @@ logger = logging.getLogger(__name__)
 GAP_ALERT_PCT   = 0.05     # gap > 5% → registrar evento
 DEFAULT_COUNT   = 756      # ~3 años de velas diarias (yfinance: period="3y")
 YF_PERIOD_MAP   = {        # count → yfinance period string
-    252: "1y",
-    504: "2y",
-    756: "3y",
+    252:  "1y",
+    504:  "2y",
+    756:  "3y",
+    1260: "5y",
 }
-YF_DEFAULT_PERIOD = "3y"
+YF_DEFAULT_PERIOD = "5y"
 
 
 class MarketData:

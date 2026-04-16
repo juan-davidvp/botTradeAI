@@ -79,8 +79,8 @@ def compute_trend_features(high: pd.Series, low: pd.Series, close: pd.Series) ->
 def compute_mean_reversion(close: pd.Series) -> pd.DataFrame:
     """Z-score de RSI(14) y distancia porcentual a SMA(200)."""
     rsi      = ta.momentum.RSIIndicator(close, window=14).rsi()
-    rsi_mean = rsi.rolling(252).mean()
-    rsi_std  = rsi.rolling(252).std()
+    rsi_mean = rsi.rolling(252, min_periods=126).mean()
+    rsi_std  = rsi.rolling(252, min_periods=126).std()
     rsi_zscore = (rsi - rsi_mean) / rsi_std.replace(0, np.nan)
 
     sma200 = close.rolling(200).mean()

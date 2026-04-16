@@ -94,6 +94,7 @@ class HMMEngine:
         flicker_threshold: int = 4,
         min_confidence: float = 0.55,
         model_path: str = "models/hmm_model.pkl",
+        min_train_bars: int = 126,
     ):
         self.n_candidates    = n_candidates or [3, 4, 5, 6, 7]
         self.n_init          = n_init
@@ -103,6 +104,7 @@ class HMMEngine:
         self.flicker_threshold = flicker_threshold
         self.min_confidence  = min_confidence
         self.model_path      = model_path
+        self.min_train_bars  = min_train_bars
 
         # Estado interno
         self.model: Optional[GaussianHMM] = None
@@ -149,9 +151,9 @@ class HMMEngine:
         X : np.ndarray shape (T, n_features)
             Matriz de características normalizadas.
         """
-        if X.shape[0] < 504:
+        if X.shape[0] < self.min_train_bars:
             raise ValueError(
-                f"Datos insuficientes: {X.shape[0]} barras. Mínimo requerido: 504 (2 años)."
+                f"Datos insuficientes: {X.shape[0]} barras. Mínimo requerido: {self.min_train_bars}."
             )
 
         best_model  = None

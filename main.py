@@ -161,15 +161,20 @@ def startup(settings: dict, dry_run: bool = False) -> dict:
 
     # ── Paso 6: Modelo HMM ──────────────────────────────────────────────────
     hmm_cfg  = settings.get("hmm", {})
+    
+    # Extraemos retrain_every_days para la lógica del loop en vivo/dry-run
+    retrain_every_days = hmm_cfg.get("retrain_every_days", 7)
+    
     hmm      = HMMEngine(
-        n_candidates   = hmm_cfg.get("n_candidates", [3, 4, 5, 6, 7]),
+        n_candidates   = hmm_cfg.get("n_candidates", [3, 4]),
         n_init         = hmm_cfg.get("n_init", 10),
-        covariance_type= hmm_cfg.get("covariance_type", "full"),
+        covariance_type= hmm_cfg.get("covariance_type", "diag"),
         stability_bars = hmm_cfg.get("stability_bars", 3),
         flicker_window = hmm_cfg.get("flicker_window", 20),
         flicker_threshold= hmm_cfg.get("flicker_threshold", 4),
         min_confidence = hmm_cfg.get("min_confidence", 0.55),
         model_path     = hmm_cfg.get("model_path", "models/hmm_model.pkl"),
+        min_train_bars = hmm_cfg.get("min_train_bars", 126),
     )
 
     loaded = hmm.load()
@@ -577,7 +582,7 @@ def run_backtest(settings: dict, compare: bool = False, symbols: Optional[List[i
     instrument_ids = symbols or settings["broker"]["active_instruments"]
     bars_by_symbol = {}
     for iid in instrument_ids:
-        df = market_data.get_historical_candles(iid, count=756)
+        df = market_data.get_historical_candles(iid, count=1260)
         if not df.empty:
             bars_by_symbol[str(iid)] = df
 
