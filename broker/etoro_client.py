@@ -162,7 +162,7 @@ class EToroClient:
         Retorna True si CID == 34044505.
         """
         identity = self.get_identity()
-        cid = identity.get("realCID") or identity.get("cid") or identity.get("id")
+        cid = identity.get("realCid") or identity.get("realCID") or identity.get("cid") or identity.get("id")
         self._cid = int(cid) if cid else None
 
         if self._cid != CID_REAL:

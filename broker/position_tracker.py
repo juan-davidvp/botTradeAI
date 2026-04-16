@@ -88,21 +88,27 @@ class PositionTracker:
         Detecta automáticamente posiciones sin stop efectivo.
         """
         try:
-            portfolio = self.client.get_portfolio()
-            pnl_data  = self.client.get_pnl()
+            pnl_data = self.client.get_pnl()
         except Exception as exc:
             logger.error("[PositionTracker] Error al sincronizar: %s", exc)
             return
 
-        # Parsear posiciones
-        client_portfolio = portfolio.get("clientPortfolio", {})
-        raw_positions    = client_portfolio.get("positions", [])
-        credit           = float(client_portfolio.get("credit", 0))
+        # El endpoint /trading/info/real/pnl devuelve clientPortfolio con
+        # positions enriquecidas (closeRate, pnL, unitsBaseValueDollars).
+        pnl_portfolio = pnl_data.get("clientPortfolio", {}) if pnl_data else {}
+        raw_positions = pnl_portfolio.get("positions", [])
+        credit        = float(pnl_portfolio.get("credit", 0))
 
-        # Parsear equity y P&L
-        equity     = self._parse_equity(pnl_data, credit, raw_positions)
-        daily_pnl  = float(pnl_data.get("dailyPnl", 0)) if pnl_data else 0.0
-        weekly_pnl = float(pnl_data.get("weeklyPnl", 0)) if pnl_data else 0.0
+        # Equity real = cash disponible + valor de mercado de todas las posiciones
+        equity = self._parse_equity(pnl_portfolio, credit, raw_positions)
+
+        # P&L diario/semanal: rastreado internamente vs equity inicial de sesión
+        if self._day_start_equity == 0.0:
+            self._day_start_equity = equity
+        if self._week_start_equity == 0.0:
+            self._week_start_equity = equity
+        daily_pnl  = round(equity - self._day_start_equity,  2)
+        weekly_pnl = round(equity - self._week_start_equity, 2)
 
         # Enriquecer posiciones con campos calculados
         enriched = self._enrich_positions(raw_positions)
@@ -165,11 +171,22 @@ class PositionTracker:
             open_rate = float(p.get("openRate", 0))
             units     = float(p.get("units", 0))
 
-            # Precio actual desde caché de rates
-            rate_data      = self._current_prices.get(instr_id, {})
-            current_price  = float(rate_data.get("mid", open_rate))
-            p["current_price"]   = current_price
-            p["unrealized_pnl"]  = round((current_price - open_rate) * units, 2)
+            # closeRate viene del endpoint /real/pnl y es el precio actual de mercado.
+            # Fallback: caché de rates del polling de precios → openRate como último recurso.
+            close_rate    = float(p.get("closeRate", 0))
+            rate_data     = self._current_prices.get(instr_id, {})
+            current_price = close_rate or float(rate_data.get("mid", open_rate))
+            p["current_price"] = current_price
+
+            # pnL viene directamente del endpoint (ya incluye fees).
+            # Fallback: calcular desde unitsBaseValueDollars o desde precios.
+            api_pnl = p.get("pnL")
+            if api_pnl is not None:
+                p["unrealized_pnl"] = round(float(api_pnl), 2)
+            else:
+                units_val = float(p.get("unitsBaseValueDollars", 0))
+                init_val  = float(p.get("initialAmountInDollars", open_rate * units))
+                p["unrealized_pnl"] = round(units_val - init_val, 2) if units_val else round((current_price - open_rate) * units, 2)
 
             # Días en cartera
             open_dt = p.get("openDateTime", "")
@@ -335,19 +352,30 @@ class PositionTracker:
 
     def _parse_equity(
         self,
-        pnl_data: Optional[Dict],
+        pnl_portfolio: Dict,
         credit: float,
         positions: List[Dict],
     ) -> float:
         """
-        Calcula equity total:
-          equity = credit + Σ(amount + unrealizedPnl por posición)
-        Fallback: usar credit + sum(amount) si no hay datos de PnL.
-        """
-        if pnl_data:
-            equity_raw = pnl_data.get("equity") or pnl_data.get("totalEquity")
-            if equity_raw:
-                return float(equity_raw)
+        Equity real = cash disponible + valor de mercado actual de cada posición.
 
-        invested = sum(float(p.get("amount", 0)) for p in positions)
-        return round(credit + invested, 2)
+        Fuente primaria: unitsBaseValueDollars (valor actual de mercado de las unidades)
+        que devuelve el endpoint /trading/info/real/pnl.
+        Fallback: initialAmountInDollars + pnL (mismo resultado, diferente campo).
+        Último recurso: credit + sum(amount) (valor de apertura, no de mercado).
+        """
+        if positions:
+            market_value = 0.0
+            for p in positions:
+                ubv = p.get("unitsBaseValueDollars")
+                if ubv is not None:
+                    market_value += float(ubv)
+                else:
+                    # Fallback: inversión inicial + P&L reportado
+                    init = float(p.get("initialAmountInDollars", p.get("amount", 0)))
+                    pnl  = float(p.get("pnL", 0))
+                    market_value += init + pnl
+            return round(credit + market_value, 2)
+
+        # Sin posiciones: equity = solo cash
+        return round(credit, 2)

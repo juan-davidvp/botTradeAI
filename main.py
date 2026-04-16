@@ -22,6 +22,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
@@ -40,6 +41,14 @@ from data.market_data      import MarketData
 from monitoring.logger     import setup_logging
 from monitoring.dashboard  import Dashboard
 from monitoring.alerts     import AlertManager
+
+# GUI opcional — no falla si PySide6 no está instalado
+try:
+    from PySide6.QtWidgets import QApplication
+    from monitoring.ui_manager import DataBridge, DashboardApp
+    _GUI_AVAILABLE = True
+except ImportError:
+    _GUI_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +263,7 @@ class MainLoop:
       9. Refrescar dashboard.
     """
 
-    def __init__(self, ctx: dict):
+    def __init__(self, ctx: dict, bridge: Optional[object] = None):
         self.ctx           = ctx
         self.client        : EToroClient     = ctx["client"]
         self.market_data   : MarketData      = ctx["market_data"]
@@ -268,6 +277,9 @@ class MainLoop:
         self.settings      : dict            = ctx["settings"]
         self.instrument_ids: List[int]       = ctx["instrument_ids"]
         self.dry_run       : bool            = ctx["dry_run"]
+
+        # DataBridge para la GUI PySide6 (None si no hay GUI activa)
+        self._bridge = bridge
 
         self._running          : bool             = True
         self._last_regime_date : Optional[date]   = None
@@ -335,8 +347,8 @@ class MainLoop:
             self._refresh_dashboard(portfolio_state)
             return
 
-        # ── 4. Features + HMM (una vez al día al cierre del mercado) ─────────
-        if self._last_regime_date != today and is_market_close_bar():
+        # ── 4. Features + HMM (startup inmediato + actualización al cierre) ───
+        if self._regime_state is None or (self._last_regime_date != today and is_market_close_bar()):
             self._compute_daily_regime()
             self._last_regime_date = today
 
@@ -499,14 +511,24 @@ class MainLoop:
     # ------------------------------------------------------------------
 
     def _refresh_dashboard(self, portfolio_state: PortfolioState) -> None:
-        try:
-            self.dashboard.render(
-                portfolio_state = portfolio_state,
-                hmm_state       = self._regime_state,
-                signals         = [],
-            )
-        except Exception as exc:
-            logger.debug("[MainLoop] Error en dashboard: %s", exc)
+        # GUI PySide6: push thread-safe via DataBridge signals
+        if self._bridge is not None:
+            try:
+                self._bridge.push_portfolio(portfolio_state)
+                self._bridge.push_regime(self._regime_state)
+                self._bridge.push_connection(True)
+            except Exception as exc:
+                logger.debug("[MainLoop] Error enviando datos a GUI: %s", exc)
+        else:
+            # Fallback: Rich terminal dashboard
+            try:
+                self.dashboard.render(
+                    portfolio_state = portfolio_state,
+                    hmm_state       = self._regime_state,
+                    signals         = [],
+                )
+            except Exception as exc:
+                logger.debug("[MainLoop] Error en dashboard: %s", exc)
 
     # ------------------------------------------------------------------
     # Guardar estado
@@ -526,6 +548,11 @@ class MainLoop:
         logger.info("[MainLoop] Señal %d recibida — iniciando shutdown seguro...", signum)
         self._running = False
         self._shutdown()
+        # Cerrar Qt si está activo (thread-safe: QApplication.quit es reentrant)
+        if _GUI_AVAILABLE:
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
 
     def _shutdown(self) -> None:
         logger.info("[MainLoop] SHUTDOWN — NO se cierran posiciones (stops activos en broker)")

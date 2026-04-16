@@ -1,0 +1,287 @@
+/* =========================================================
+   AgentBotTrade — Dark Blue-Purple Design System
+   Paleta: Electric Blue (#448AFF) → Deep Purple (#7C3AED)
+   Inspiración: Bloomberg Terminal moderno, simplificado
+   ========================================================= */
+
+/* ── Variables simuladas via colores semánticos ─────────── */
+/* bg-deep     : #080D1A  (fondo más oscuro)                 */
+/* bg-surface  : #0F1629  (tarjetas y paneles)               */
+/* bg-elevated : #161E35  (filas hover, inputs activos)      */
+/* accent-blue : #448AFF  (acciones primarias, progreso)     */
+/* accent-purple: #7C3AED (gradiente, badges de régimen)     */
+/* text-primary : #E8EEFF  (títulos y números)               */
+/* text-muted   : #7B8BB2  (etiquetas secundarias)           */
+/* success      : #10B981                                    */
+/* warning      : #F59E0B                                    */
+/* danger       : #EF4444                                    */
+
+/* ── Ventana principal ─────────────────────────────────── */
+QMainWindow, QWidget#centralWidget {
+    background-color: #080D1A;
+}
+
+QWidget {
+    font-family: "Segoe UI", "Inter", "Roboto", sans-serif;
+    font-size: 13px;
+    color: #E8EEFF;
+}
+
+/* ── Scrollbar discreta ────────────────────────────────── */
+QScrollBar:vertical {
+    background: #080D1A;
+    width: 6px;
+    border-radius: 3px;
+}
+QScrollBar::handle:vertical {
+    background: #2A3560;
+    border-radius: 3px;
+    min-height: 30px;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical { height: 0; }
+
+/* ── Tarjetas base ─────────────────────────────────────── */
+QFrame#card {
+    background-color: #0F1629;
+    border: 1px solid #1C2548;
+    border-radius: 12px;
+    padding: 0px;
+}
+
+QFrame#cardAccent {
+    background-color: #0F1629;
+    border: 1px solid #448AFF;
+    border-radius: 12px;
+}
+
+QFrame#cardWarning {
+    background-color: #0F1629;
+    border: 1px solid #F59E0B;
+    border-radius: 12px;
+}
+
+QFrame#cardDanger {
+    background-color: #0F1629;
+    border: 1px solid #EF4444;
+    border-radius: 12px;
+}
+
+/* ── Encabezados de sección ────────────────────────────── */
+QLabel#sectionTitle {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    color: #7B8BB2;
+    text-transform: uppercase;
+    padding: 0px;
+}
+
+/* ── Valores numéricos grandes ─────────────────────────── */
+QLabel#metricLarge {
+    font-size: 28px;
+    font-weight: 700;
+    color: #E8EEFF;
+    font-family: "Segoe UI", "Roboto Mono", monospace;
+    letter-spacing: -0.5px;
+}
+
+QLabel#metricMedium {
+    font-size: 16px;
+    font-weight: 600;
+    color: #E8EEFF;
+    font-family: "Segoe UI", monospace;
+}
+
+QLabel#metricSmall {
+    font-size: 12px;
+    font-weight: 400;
+    color: #7B8BB2;
+}
+
+/* ── Valores con color semántico ───────────────────────── */
+QLabel#valuePositive {
+    color: #10B981;
+    font-weight: 600;
+    font-family: monospace;
+}
+
+QLabel#valueNegative {
+    color: #EF4444;
+    font-weight: 600;
+    font-family: monospace;
+}
+
+QLabel#valueNeutral {
+    color: #7B8BB2;
+    font-family: monospace;
+}
+
+/* ── Badge de régimen (pill) ───────────────────────────── */
+QLabel#regimeBadge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    background-color: #1C2548;
+    color: #448AFF;
+    border: 1px solid #2A3560;
+}
+
+QLabel#regimeBadgeBull {
+    background-color: rgba(16, 185, 129, 0.15);
+    color: #10B981;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 20px;
+}
+
+QLabel#regimeBadgeBear {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #EF4444;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 20px;
+}
+
+QLabel#regimeBadgeNeutral {
+    background-color: rgba(245, 158, 11, 0.15);
+    color: #F59E0B;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 20px;
+}
+
+QLabel#regimeBadgeCrash {
+    background-color: rgba(239, 68, 68, 0.25);
+    color: #FF6B6B;
+    border: 1px solid #EF4444;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 20px;
+}
+
+/* ── Barra de progreso ROI ─────────────────────────────── */
+QProgressBar#roiProgress {
+    background-color: #1C2548;
+    border: none;
+    border-radius: 6px;
+    height: 10px;
+    text-align: center;
+    font-size: 10px;
+    color: transparent;
+}
+
+QProgressBar#roiProgress::chunk {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:0,
+        stop:0 #448AFF,
+        stop:1 #7C3AED
+    );
+    border-radius: 6px;
+}
+
+/* ── Tabla de posiciones ───────────────────────────────── */
+QTableWidget {
+    background-color: transparent;
+    gridline-color: #1C2548;
+    border: none;
+    selection-background-color: #1C2548;
+    outline: none;
+}
+
+QTableWidget::item {
+    padding: 8px 12px;
+    color: #E8EEFF;
+    border-bottom: 1px solid #161E35;
+    font-family: "Segoe UI", monospace;
+    font-size: 12px;
+}
+
+QTableWidget::item:selected {
+    background-color: #1C2548;
+    color: #448AFF;
+}
+
+QTableWidget::item:hover {
+    background-color: #161E35;
+}
+
+QHeaderView::section {
+    background-color: #0F1629;
+    color: #7B8BB2;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    padding: 8px 12px;
+    border: none;
+    border-bottom: 1px solid #1C2548;
+    text-transform: uppercase;
+}
+
+QHeaderView {
+    background-color: #0F1629;
+}
+
+/* ── Separador horizontal ──────────────────────────────── */
+QFrame#separator {
+    background-color: #1C2548;
+    max-height: 1px;
+    border: none;
+}
+
+/* ── Indicador de estado API ───────────────────────────── */
+QLabel#statusDot {
+    font-size: 10px;
+}
+
+QLabel#statusText {
+    font-size: 11px;
+    color: #7B8BB2;
+}
+
+/* ── Tooltip ───────────────────────────────────────────── */
+QToolTip {
+    background-color: #161E35;
+    color: #E8EEFF;
+    border: 1px solid #2A3560;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+/* ── Circuit Breaker badge ─────────────────────────────── */
+QLabel#cbOk {
+    color: #10B981;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    background-color: rgba(16, 185, 129, 0.12);
+    border-radius: 4px;
+}
+
+QLabel#cbWarn {
+    color: #F59E0B;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    background-color: rgba(245, 158, 11, 0.12);
+    border-radius: 4px;
+}
+
+QLabel#cbHalt {
+    color: #EF4444;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    background-color: rgba(239, 68, 68, 0.15);
+    border-radius: 4px;
+}

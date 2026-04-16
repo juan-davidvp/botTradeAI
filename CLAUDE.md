@@ -124,3 +124,70 @@ All monetary constants reference `$546.14` (real account as of 2026-04-14). If c
 ### Real-money safety
 
 `EToroClient.__init__` with `environment="real"` calls `_confirm_live_trading()` which blocks on console input requiring the string `CONFIRMO`. This is intentional — never bypass it in production code. The `trading_halted.lock` file must be manually deleted to resume after a peak-DD lockout.
+
+---
+
+## Changes applied (session 2026-04-16)
+
+### Bug fixes
+
+**`broker/etoro_client.py` — health check CID key mismatch**
+- `health_check()` was checking `identity.get("realCID")` (uppercase D) but the API returns `realCid` (lowercase d). Added `realCid` as primary lookup so the health check passes.
+
+**`main.py` — HMM regime never computed during dry-run**
+- `_compute_daily_regime()` only ran inside `is_market_close_bar()` (16:00–16:05 ET). If the bot started at any other time, `_regime_state` stayed `None` indefinitely and no signals were generated.
+- Fix: changed condition to `if self._regime_state is None or (self._last_regime_date != today and is_market_close_bar())` — regime is now computed on the first tick and refreshed at close each day.
+
+**`broker/position_tracker.py` — equity and P&L showing wrong values**
+- `_parse_equity()` was looking for `pnl_data.get("equity")` — that key does not exist in the API response. Fallback used `sum(amount)` (collateral at open, not market value).
+- `_enrich_positions()` was using the rates cache for current price; when empty it fell back to `openRate`, making the `Actual` column show `—` and P&L always `+0.00%`.
+- `daily_pnl` / `weekly_pnl` were reading `pnl_data.get("dailyPnl")` which does not exist.
+- **Fix**:
+  - `_sync_positions` now uses only `get_pnl()` (`/trading/info/real/pnl`) which returns positions enriched with `closeRate`, `pnL`, and `unitsBaseValueDollars`.
+  - `_parse_equity`: equity = `credit` + Σ `unitsBaseValueDollars` (current market value per position).
+  - `_enrich_positions`: `current_price` = `closeRate` from API; `unrealized_pnl` = `pnL` field from API (already net of fees).
+  - Daily/weekly PnL tracked internally vs `_day_start_equity` / `_week_start_equity` initialized on first sync of session.
+
+**`core/regime_strategies.py` — bot generating 0 signals**
+- Three layered bugs prevented any trades in favorable regimes:
+  1. `_combine_technical()` returned `NONE` when both filters were WEAK → all STRONG_BULL/EUPHORIA signals blocked.
+  2. `_size_from_confirmation()` checked per-position USD (`equity×pct/5`) against $100 minimum → always < $100 for HighVol regime.
+  3. `HighVolDefensiveStrategy` had a hard block rejecting WEAK/NONE confirmation even after the above were bypassed.
+- **Fix**: minimum returns `WEAK` (never `NONE`), size check uses total portfolio USD, hard block removed from `HighVolDefensiveStrategy`.
+
+**`data/feature_engineering.py` + `backtest/backtester.py` + `data/market_data.py` — window length leakage**
+- RSI rolling without `min_periods` consumed 266 raw bars before first valid value; outer z-score added 126 more; 504-bar IS slice yielded only ~114 clean bars → `ValueError: Datos insuficientes`.
+- **Fix**: `min_periods=126` on RSI rolling means; `warmup_bars` raised to 330; historical data fetch changed from 756 (3y) to 1260 (5y) bars.
+
+### New features
+
+**PySide6 GUI Dashboard** (`monitoring/ui_manager.py`, `monitoring/styles.qss`, `monitoring/MICROCOPY_GUIDE.md`)
+- Dark blue-purple desktop dashboard replacing (or running alongside) the Rich terminal view.
+- Architecture: `DataBridge` (Qt signals, thread-safe) → `RegimeCard`, `EquityCard`, `RiskCard`, `PositionsCard`, `SystemCard` → `DashboardApp(QMainWindow)`.
+- GUI runs in the main thread; bot polling loop runs in a `daemon=True` worker thread.
+- Falls back to Rich terminal silently if PySide6 is not installed (`_GUI_AVAILABLE = False`).
+- UX writing: HMM state labels translated to plain language ("Impulso alcista fuerte", "El bot protege tu capital", etc.). Full rationale in `monitoring/MICROCOPY_GUIDE.md`.
+
+**GUI integration in `main.py`**
+- `import threading` added.
+- Optional PySide6 import block at module level (no hard dependency).
+- `MainLoop.__init__` accepts `bridge: Optional[DataBridge]`.
+- `_refresh_dashboard()` pushes to bridge when GUI is active; falls back to Rich render otherwise.
+- `_shutdown_handler()` calls `QApplication.quit()` on SIGINT/SIGTERM to close the window cleanly.
+- Entry point for live/dry-run: creates `QApplication` → `DashboardApp` → starts `MainLoop` in worker thread → `app.exec()` in main thread.
+
+### eToro API clarifications (from MCP docs)
+
+**`GET /api/v1/me`** — IS in the official OpenAPI spec. Returns `{ gcid, realCid, demoCid }`. The field name is `realCid` (camelCase, lowercase d).
+
+**`GET /api/v1/trading/info/real/pnl`** — Primary source for live equity and P&L. Response: `clientPortfolio.credit` (free cash) + `clientPortfolio.positions[]` each with `closeRate` (current price), `pnL` (unrealized P&L net of fees), `unitsBaseValueDollars` (current market value), `initialAmountInDollars` (cost basis). No `dailyPnl` or `weeklyPnl` fields exist — must be tracked internally.
+
+**`GET /api/v1/trading/info/portfolio`** — Returns positions without P&L enrichment. Use only for order/mirror metadata, not for equity calculation.
+
+### Module table update
+
+| Module | Responsibility |
+|--------|---------------|
+| `monitoring/ui_manager.py` | PySide6 GUI: `DataBridge` (thread-safe Qt signals), widget cards, `DashboardApp` main window |
+| `monitoring/styles.qss` | Qt Style Sheets: dark blue-purple palette, card borders, progress bar gradient, table styling |
+| `monitoring/MICROCOPY_GUIDE.md` | UX writing guide: regime label translations, drawdown copy, color semantics |
