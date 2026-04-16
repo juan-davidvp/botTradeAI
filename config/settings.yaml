@@ -1,0 +1,94 @@
+# ============================================================
+# settings.yaml — regime-trader (eToro Edition)
+# FUENTE DE VERDAD: portfolio_raw.json (2026-04-14)
+# Capital: $546.14 | Objetivo: +20% en 120 días → $655.37
+# ============================================================
+
+broker:
+  name: "etoro"
+  environment: "real"               # "real" | "demo"
+  base_url: "https://public-api.etoro.com/api/v1"
+  expected_cid: 34044505
+  polling_interval_seconds: 30      # No hay WebSocket de fills
+  active_instruments:
+    - 4238    # $270.00 | open: 637.10
+    - 14328   # $70.00  | open: 1853.51
+    - 9408    # $60.00  | open: 136.68
+    - 6218    # $60.00  | open: 432.00
+    - 2488    # $40.00  | open: 208.50
+  timeframe: "1Day"
+  # Mapeo eToro instrumentID → ticker Yahoo Finance (para datos históricos)
+  # El endpoint de candles de eToro no está disponible en la API pública v1.
+  instrument_symbols:
+    4238:  "VOO"    # Vanguard S&P 500 ETF
+    14328: "MELI"   # MercadoLibre Inc  (.RTH → MELI en Yahoo)
+    9408:  "PLTR"   # Palantir Technologies (.RTH → PLTR en Yahoo)
+    6218:  "APP"    # Applovin Corp
+    2488:  "DAVE"   # Dave Inc.
+
+hmm:
+  n_candidates: [3, 4, 5, 6, 7]
+  n_init: 10
+  covariance_type: "full"
+  min_train_bars: 252
+  stability_bars: 3
+  flicker_window: 20
+  flicker_threshold: 4
+  min_confidence: 0.55
+  retrain_every_days: 7
+  model_path: "models/hmm_model.pkl"
+
+strategy:
+  low_vol_allocation: 0.95
+  mid_vol_allocation_trend: 0.95
+  mid_vol_allocation_no_trend: 0.60
+  high_vol_allocation: 0.60
+  low_vol_leverage: 1.0
+  rebalance_threshold: 0.10
+  uncertainty_size_mult: 0.50
+
+risk:
+  initial_equity: 546.14
+  target_equity: 655.37
+  target_date: "2026-08-12"
+  max_risk_per_trade: 0.01          # 1% = $5.46
+  max_exposure: 0.92                # 92% = $502.45
+  max_leverage: 1.0
+  max_single_position: 0.20         # 20% = $109.23
+  target_position_size_usd: 109.23
+  min_position_size_usd: 100.0
+  max_concurrent: 5
+  max_daily_trades: 10
+  daily_dd_reduce: 0.02             # $10.92
+  daily_dd_halt: 0.03               # $16.38
+  weekly_dd_reduce: 0.05            # $27.31
+  weekly_dd_halt: 0.07              # $38.23
+  max_dd_from_peak: 0.10            # $54.61
+  default_stop_loss_pct: 0.05
+  urgent_stops:
+    - position_id: 3403421461
+      stop_loss_rate: 605.24        # 637.10 * 0.95
+    - position_id: 3403428716
+      stop_loss_rate: 198.08        # 208.50 * 0.95
+    - position_id: 3403430868
+      stop_loss_rate: 129.85        # 136.68 * 0.95
+    - position_id: 3403433830
+      stop_loss_rate: 410.40        # 432.00 * 0.95
+    - position_id: 3403418899
+      stop_loss_rate: 1760.83       # 1853.51 * 0.95
+
+backtest:
+  slippage_pct: 0.0005
+  commission_per_trade: 1.0
+  initial_capital: 546.14
+  train_window: 252
+  test_window: 126
+  step_size: 126
+  risk_free_rate: 0.045
+
+monitoring:
+  dashboard_refresh_seconds: 30
+  alert_rate_limit_minutes: 15
+  log_dir: "logs"
+  log_max_bytes: 10485760           # 10 MB
+  log_backup_count: 30
