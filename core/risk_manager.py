@@ -509,7 +509,7 @@ class RiskManager:
 
         max_corr = 0.0
         for pos in state.positions:
-            pos_sym = str(pos.get("instrumentID", pos.get("symbol", "")))
+            pos_sym = str(pos.get("instrumentId") or pos.get("instrumentID") or pos.get("symbol", ""))
             if pos_sym == symbol or pos_sym not in price_history:
                 continue
             pos_rets = price_history[pos_sym].pct_change().dropna().tail(CORR_WINDOW_DAYS)
@@ -548,7 +548,8 @@ class RiskManager:
         alerts = []
 
         for pos in positions:
-            pid   = str(pos.get("positionID", ""))
+            pid   = str(pos.get("positionId") or pos.get("positionID", ""))
+            instr = pos.get("instrumentId") or pos.get("instrumentID")
             slr   = float(pos.get("stopLossRate", 0))
             nosl  = bool(pos.get("isNoStopLoss", False))
 
@@ -556,7 +557,7 @@ class RiskManager:
                 required = urgent_map.get(pid)
                 alerts.append({
                     "position_id":    pid,
-                    "instrument_id":  pos.get("instrumentID"),
+                    "instrument_id":  instr,
                     "current_stop":   slr,
                     "required_stop":  required,
                     "action":         "CLOSE_REOPEN_WITH_STOP",
@@ -564,7 +565,7 @@ class RiskManager:
                 logger.warning(
                     "[RiskManager] POSICIÓN SIN STOP EFECTIVO | posID=%s | instrID=%s | "
                     "stopLossRate=%.4f | requerido=%.4f",
-                    pid, pos.get("instrumentID"), slr, required or 0,
+                    pid, instr, slr, required or 0,
                 )
 
         return alerts

@@ -159,6 +159,28 @@ def build_features(df: pd.DataFrame, zscore_window: int = 252) -> pd.DataFrame:
     return features
 
 
+def validate_features(features: pd.DataFrame) -> dict:
+    """
+    Checks feature quality after build_features(). Returns dict with
+    'ok' (bool) and 'issues' (list of strings describing problems found).
+    """
+    issues = []
+    nan_counts = features.isna().sum()
+    nan_cols = nan_counts[nan_counts > 0]
+    if not nan_cols.empty:
+        issues.append(f"NaN en columnas: {nan_cols.to_dict()}")
+
+    inf_cols = [c for c in features.columns if np.isinf(features[c]).any()]
+    if inf_cols:
+        issues.append(f"Inf en columnas: {inf_cols}")
+
+    zero_var = [c for c in features.columns if features[c].std() < 1e-8]
+    if zero_var:
+        issues.append(f"Varianza cero (posible constante): {zero_var}")
+
+    return {"ok": len(issues) == 0, "issues": issues, "shape": features.shape}
+
+
 FEATURE_COLUMNS = [
     "ret_1", "ret_5", "ret_20",
     "vol_20", "vol_ratio",

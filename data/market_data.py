@@ -123,6 +123,7 @@ class MarketData:
             return df
 
         self._detect_gaps(df, instrument_id)
+        self._warn_short_history(df, instrument_id, ticker)
         self._candle_cache[instrument_id] = df
 
         logger.info(
@@ -276,6 +277,16 @@ class MarketData:
             )
         return spread
 
+    def _warn_short_history(self, df: pd.DataFrame, instrument_id: int, ticker: str) -> None:
+        """Warns when an instrument has fewer than 5 years of daily data."""
+        n_bars = len(df)
+        if n_bars < 1000:
+            logger.warning(
+                "[MarketData] HISTORIAL CORTO | instrID=%d (%s) | %d barras (< 1000). "
+                "HMM z-scores pueden ser inestables; revisar calidad de señales.",
+                instrument_id, ticker, n_bars,
+            )
+
     # ------------------------------------------------------------------
     # Detección de gaps
     # ------------------------------------------------------------------
@@ -343,6 +354,53 @@ class MarketData:
             )
 
         return self._candle_cache.get(instrument_id, pd.DataFrame())
+
+    # ------------------------------------------------------------------
+    # Índice de referencia para Fuerza Relativa (Whale Capital)
+    # ------------------------------------------------------------------
+
+    def get_reference_index(
+        self,
+        ticker: str = "SPY",
+        count: int = DEFAULT_COUNT,
+    ) -> pd.DataFrame:
+        """
+        Descarga el índice de referencia (SPY/QQQ) para cálculo de RS.
+        Usa el mismo caché de velas con clave negativa (-1) para SPY.
+
+        Parámetros
+        ----------
+        ticker : str   Ticker de Yahoo Finance (default "SPY")
+        count  : int   Número aproximado de velas (default 756 ≈ 3 años)
+        """
+        cache_key = -1  # clave reservada para el índice de referencia
+        if cache_key in self._candle_cache:
+            return self._candle_cache[cache_key]
+
+        period = YF_PERIOD_MAP.get(count, YF_DEFAULT_PERIOD)
+        try:
+            raw = yf.download(
+                ticker,
+                period=period,
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+            )
+        except Exception as exc:
+            logger.error("[MarketData] yfinance falló para índice %s: %s", ticker, exc)
+            return pd.DataFrame()
+
+        df = self._parse_yf_dataframe(raw, ticker)
+        if df.empty:
+            logger.warning("[MarketData] Datos vacíos para índice %s", ticker)
+            return df
+
+        self._candle_cache[cache_key] = df
+        logger.info(
+            "[MarketData] Índice %s | filas=%d | %s → %s",
+            ticker, len(df), df.index[0].date(), df.index[-1].date(),
+        )
+        return df
 
     def clear_cache(self, instrument_id: Optional[int] = None) -> None:
         """Limpia el caché de velas. Sin argumento limpia todo."""

@@ -27,11 +27,11 @@ broker:
     2488:  "DAVE"   # Dave Inc.
 
 hmm:
-  n_candidates: [3, 4]
-  n_init: 10
-  covariance_type: "diag"
-  min_train_bars: 126
-  stability_bars: 3
+  n_candidates: [3, 4, 5, 6, 7]
+  n_init: 15
+  covariance_type: "full"
+  min_train_bars: 200
+  stability_bars: 2
   flicker_window: 20
   flicker_threshold: 4
   min_confidence: 0.55
@@ -85,6 +85,28 @@ backtest:
   test_window: 126
   step_size: 126
   risk_free_rate: 0.045
+
+whale:
+  enabled: true
+  reference_index: "SPY"            # índice de referencia para Fuerza Relativa
+  rs_window: 252                    # ventana RS (1 año bursátil)
+  rs_leader_threshold: 1.05         # RS ≥ 1.15 → Market Leader
+  rs_laggard_threshold: 0.75        # RS ≤ 0.85 → Rezagado (descarte inmediato)
+  max_stop_pct: 0.05                # stop loss máximo absoluto = 5%
+  ballenera_position_pct: 0.20      # Ballenera: 20% del equity por operación
+  corto_plazo_min_pct: 0.025        # Corto Plazo: tamaño mínimo
+  corto_plazo_max_pct: 0.15         # Corto Plazo: tamaño máximo
+  cup_min_depth_pct: 0.15           # Cup & Handle: profundidad mínima 15%
+  cup_max_depth_pct: 0.60           # Cup & Handle: profundidad máxima 60%
+  volume_breakout_mult: 1.5         # volumen en breakout ≥ 1.5× media 50d
+  volume_climactic_mult: 2.0        # volumen climático para señal de salida
+  min_confidence: 0.45              # confianza mínima para emitir señal Whale
+  # Instrumentos objetivo para la pivotación (añadir en active_instruments también)
+  # Criterios Ballenera: 1–5 años en bolsa, cap $300M–$50B
+  target_instruments:
+    - symbol: "DAVE"    # Dave Inc — ~$1B cap, 2021 IPO → Ballenera elegible
+    - symbol: "PLTR"    # Palantir — ~$50B cap, 2020 IPO → límite superior Ballenera
+    - symbol: "APP"     # AppLovin — ~$100B cap, 2021 IPO → Corto Plazo (demasiado grande)
 
 monitoring:
   dashboard_refresh_seconds: 30

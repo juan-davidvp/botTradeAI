@@ -212,7 +212,7 @@ class TestSettingsVerification:
             return yaml.safe_load(f)
 
     def test_initial_equity(self, settings):
-        assert settings["risk"]["initial_equity"] == 546.14
+        assert settings["risk"]["initial_equity"] == 560.05
 
     def test_max_single_position(self, settings):
         assert settings["risk"]["max_single_position"] == 0.20

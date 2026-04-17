@@ -2,7 +2,7 @@
 core/regime_strategies.py
 Fase 3 — Estrategias de Asignación Basadas en Régimen de Volatilidad HMM.
 
-Capital real: $546.14 | Objetivo: +20% en 120 días → $655.37
+Capital real: $560.05 | Objetivo: +20% en 120 días → $655.37
 Apalancamiento forzado: x1 | Metodología: Ballenera (LONG only)
 
 Estrategias de régimen:
@@ -33,11 +33,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constantes del portafolio real
 # ---------------------------------------------------------------------------
-INITIAL_EQUITY        = 546.14
+INITIAL_EQUITY        = 560.05
 TARGET_EQUITY         = 655.37
-MAX_POSITION_PCT      = 0.20          # 20% por posición = $109.23
+MAX_POSITION_PCT      = 0.20          # 20% por posición = $112.01
 MIN_POSITION_USD      = 100.0         # Mínimo eToro
-TARGET_POSITION_USD   = 109.23
+TARGET_POSITION_USD   = 112.01
 DEFAULT_STOP_PCT      = 0.05          # 5% stop loss fijo (Ballenera)
 HIGH_VOL_STOP_PCT     = 0.07          # 7% en alta volatilidad confirmada
 LEVERAGE              = 1.0           # Forzado — capital < $1k

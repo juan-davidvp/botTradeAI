@@ -26,6 +26,9 @@ import threading
 import time
 from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 
 import yaml
 
@@ -78,12 +81,13 @@ def is_market_open(instrument_ids: List[int]) -> bool:
     Regla: acciones USA → lunes-viernes 09:30-16:00 ET.
     Crypto → 24/7 (instrumentos con ID conocido de cripto).
     Simplificación conservadora: si algún instrumento es crypto, siempre True.
+    Usa hora US/Eastern (respeta EST/EDT automáticamente).
     """
-    CRYPTO_IDS = {1,2,3,100,101}   # ampliar según mapa de instrumentos eToro
+    CRYPTO_IDS = {1, 2, 3, 100, 101}   # ampliar según mapa de instrumentos eToro
     if any(i in CRYPTO_IDS for i in instrument_ids):
         return True
-    now    = datetime.now()
-    wd     = now.weekday()          # 0=lunes, 4=viernes
+    now    = datetime.now(_ET)
+    wd     = now.weekday()           # 0=lunes, 4=viernes
     hhmm   = now.hour * 60 + now.minute
     open_  = MARKET_OPEN_H  * 60 + MARKET_OPEN_M
     close_ = MARKET_CLOSE_H * 60 + MARKET_CLOSE_M
@@ -92,15 +96,15 @@ def is_market_open(instrument_ids: List[int]) -> bool:
 
 def is_market_close_bar() -> bool:
     """True si estamos dentro de los 5 minutos posteriores al cierre (16:00 ET)."""
-    now   = datetime.now()
+    now   = datetime.now(_ET)
     hhmm  = now.hour * 60 + now.minute
     close = MARKET_CLOSE_H * 60 + MARKET_CLOSE_M
     return close <= hhmm < close + 5
 
 
 def is_monday_open() -> bool:
-    """True si es lunes en horario de apertura → re-entrenamiento semanal."""
-    now  = datetime.now()
+    """True si es lunes en horario de apertura ET → re-entrenamiento semanal."""
+    now  = datetime.now(_ET)
     hhmm = now.hour * 60 + now.minute
     return now.weekday() == 0 and hhmm < MARKET_OPEN_H * 60 + MARKET_OPEN_M + 10
 
@@ -201,6 +205,18 @@ def startup(settings: dict, dry_run: bool = False) -> dict:
     # ── Paso 7: Inicializar RiskManager con portafolio actual ───────────────
     # (risk_manager ya creado en paso 5 con settings calibrados)
 
+    # ── Paso 7b: Warm-up del estado forward del HMM con las últimas 60 barras ─
+    # Evita arrancar desde la distribución prior fría (CF-4: restart sin contexto).
+    try:
+        primary_id    = instrument_ids[0]
+        df_warmup     = market_data.get_historical_candles(primary_id, count=80)
+        if not df_warmup.empty:
+            feat_warmup = build_features(df_warmup)
+            if not feat_warmup.empty:
+                hmm.warmup_forward(feat_warmup.values, warmup_bars=60)
+    except Exception as _exc:
+        logger.warning("Warm-up HMM no completado (no crítico): %s", _exc)
+
     # ── Paso 8: PositionTracker ─────────────────────────────────────────────
     alert_mgr = AlertManager(settings=settings.get("monitoring", {}))
 
@@ -215,7 +231,12 @@ def startup(settings: dict, dry_run: bool = False) -> dict:
     # ── Paso 9: SignalGenerator — usar equity en vivo del tracker ──────────
     _ps    = tracker.get_portfolio_state()
     equity = _ps.equity if (_ps and _ps.equity > 0) else risk_settings.get("initial_equity", 560.05)
-    sig_gen = SignalGenerator(hmm_engine=hmm, equity=equity)
+    whale_cfg = settings.get("whale", {})
+    sig_gen = SignalGenerator(
+        hmm_engine=hmm,
+        equity=equity,
+        whale_settings=whale_cfg,
+    )
 
     # ── Paso 10: Dashboard y mensaje de inicio ──────────────────────────────
     dashboard = Dashboard(settings=settings)
@@ -287,6 +308,7 @@ class MainLoop:
         self._last_retrain_week: Optional[int]    = None
         self._regime_state                        = None
         self._bars_cache       : Dict[int, object]= {}
+        self._index_bars                          = None  # SPY para RS Whale
         self._consecutive_api_fails: int          = 0
 
         # Registrar manejadores de señal UNIX
@@ -323,6 +345,9 @@ class MainLoop:
     def _tick(self) -> None:
         today = date.today()
 
+        # ── 0. Avanzar scheduler de PositionTracker (sincroniza portafolio cada 30s) ──
+        self.tracker.tick()
+
         # ── 1. Polling de precios ────────────────────────────────────────────
         rates = self._poll_prices()
         if rates:
@@ -341,6 +366,9 @@ class MainLoop:
         portfolio_state = self.tracker.get_portfolio_state()
         if portfolio_state is None:
             return
+
+        # ── 2b. Sincronizar equity en SignalGenerator ────────────────────────
+        self.sig_gen.update_equity(portfolio_state.equity)
 
         # ── 3. Circuit breaker ───────────────────────────────────────────────
         cb_status = self.risk_manager.update_circuit_breaker(
@@ -402,6 +430,15 @@ class MainLoop:
                 return
 
             self._bars_cache[primary_id] = df
+
+            # Cargar índice de referencia para Fuerza Relativa (Whale Capital)
+            whale_cfg = self.settings.get("whale", {})
+            if whale_cfg.get("enabled") and self._index_bars is None:
+                ref_ticker = whale_cfg.get("reference_index", "SPY")
+                try:
+                    self._index_bars = self.market_data.get_reference_index(ref_ticker, count=1260)
+                except Exception as _exc:
+                    logger.warning("[MainLoop] No se pudo cargar índice %s: %s", ref_ticker, _exc)
 
             # Algoritmo Forward (sin look-ahead)
             regime_state = self.hmm.predict_regime_filtered(features.values[-1])
@@ -468,6 +505,9 @@ class MainLoop:
                 symbol=str(instr_id),
                 bars=bars,
                 regime_state=self._regime_state,
+                index_bars=self._index_bars,
+                n_open_positions=len(portfolio_state.positions),
+                available_cash=portfolio_state.cash,
             )
             if signal is None:
                 continue

@@ -8,6 +8,7 @@ Fase 2 — Motor HMM de Detección de Regímenes de Volatilidad.
 - Persistencia con pickle + metadatos.
 """
 
+import collections
 import logging
 import os
 import pickle
@@ -121,7 +122,7 @@ class HMMEngine:
         self._consecutive_bars: int = 0
         self._pending_label: Optional[str] = None
         self._pending_count: int = 0
-        self._regime_history: List[str] = []            # últimas flicker_window predicciones
+        self._regime_history: collections.deque = collections.deque(maxlen=flicker_window)
 
     # ------------------------------------------------------------------
     # BIC
@@ -129,13 +130,21 @@ class HMMEngine:
 
     @staticmethod
     def _compute_bic(model: GaussianHMM, X: np.ndarray) -> float:
-        """BIC = -2 * logL + k * log(N)."""
+        """BIC = -2 * logL + k * log(N) con conteo de parámetros correcto por covariance_type."""
         log_likelihood = model.score(X)
-        n_samples = X.shape[0]
-        n_features = X.shape[1]
+        n_samples, n_features = X.shape
         n = model.n_components
-        # parámetros: startprob (n-1), transmat (n*(n-1)), means (n*f), covars (n*f*f para "full")
-        k = (n - 1) + n * (n - 1) + n * n_features + n * n_features ** 2
+        # Covarianza: número de params libres depende del tipo
+        cov_type = model.covariance_type
+        if cov_type == "diag":
+            k_cov = n * n_features
+        elif cov_type == "full":
+            k_cov = n * n_features * (n_features + 1) // 2
+        elif cov_type == "tied":
+            k_cov = n_features * (n_features + 1) // 2
+        else:  # "spherical"
+            k_cov = n
+        k = (n - 1) + n * (n - 1) + n * n_features + k_cov
         return -2 * log_likelihood * n_samples + k * np.log(n_samples)
 
     # ------------------------------------------------------------------
@@ -208,7 +217,35 @@ class HMMEngine:
         self._consecutive_bars = 0
         self._pending_label = None
         self._pending_count = 0
-        self._regime_history = []
+        self._regime_history = collections.deque(maxlen=self.flicker_window)
+
+        # OOS temporal holdout diagnostic
+        split = max(int(X.shape[0] * 0.80), self.min_train_bars)
+        if X.shape[0] - split >= 30:
+            try:
+                oos_model = GaussianHMM(
+                    n_components=best_model.n_components,
+                    covariance_type=self.covariance_type,
+                    n_iter=100,
+                    random_state=0,
+                )
+                oos_model.fit(X[:split])
+                is_ll  = oos_model.score(X[:split])
+                oos_ll = oos_model.score(X[split:])
+                ratio  = oos_ll / (abs(is_ll) + 1e-8)
+                logger.info(
+                    "HMM OOS validation | n=%d | IS_ll=%.2f | OOS_ll=%.2f | ratio=%.3f",
+                    best_model.n_components, is_ll, oos_ll, ratio,
+                )
+                if ratio < 0.5:
+                    logger.warning(
+                        "HMM POSIBLE OVERFITTING: ratio OOS/IS=%.3f < 0.5 — "
+                        "modelo n=%d puede no generalizar en datos recientes. "
+                        "Considera ampliar datos históricos o reducir n_candidates.",
+                        ratio, best_model.n_components,
+                    )
+            except Exception as exc:
+                logger.debug("OOS validation falló (no crítico): %s", exc)
 
         logger.info(
             "HMM entrenado: n_regimes=%d, BIC=%.2f, convergido=%s, fecha=%s",
@@ -219,13 +256,23 @@ class HMMEngine:
 
     def _build_regime_infos(self) -> None:
         """Construye RegimeInfo para cada estado HMM basado en estadísticas aprendidas."""
+        from data.feature_engineering import FEATURE_COLUMNS
         self.regime_infos = {}
-        vol_col_idx = 3  # índice de vol_20 en el vector de features
+        # Índice dinámico de vol_20 — robusto frente a reordenamientos del pipeline
+        try:
+            vol_col_idx = FEATURE_COLUMNS.index("vol_20")
+        except ValueError:
+            vol_col_idx = 3  # fallback conservador
 
         for rank, state_id in enumerate(self.regime_order):
             label = self.regime_labels[rank]
             exp_ret = float(self.model.means_[state_id, 0])
-            exp_vol = float(np.sqrt(self.model.covars_[state_id][vol_col_idx, vol_col_idx]))
+            cov = self.model.covars_[state_id]
+            # hmmlearn >= 0.3 stores "diag" as (d,d) with zeros off-diagonal
+            if cov.ndim == 1:
+                exp_vol = float(np.sqrt(cov[vol_col_idx]))
+            else:
+                exp_vol = float(np.sqrt(cov[vol_col_idx, vol_col_idx]))
 
             # Política conservadora: menor asignación en regímenes extremos
             if label in ("CRASH", "STRONG_BEAR", "BEAR"):
@@ -254,23 +301,46 @@ class HMMEngine:
     def _log_emission(self, obs: np.ndarray) -> np.ndarray:
         """
         Log-probabilidad de emisión para cada estado dado el vector de observación.
-        Asume distribución Gaussiana multivariada.
+        Maneja covariance_type "diag" y "full" correctamente.
         """
         n = self.n_regimes
+        d = len(obs)
+        log_2pi = d * np.log(2 * np.pi)
         log_probs = np.zeros(n)
+
         for state in range(n):
-            mean  = self.model.means_[state]
-            covar = self.model.covars_[state]
-            diff  = obs - mean
+            mean = self.model.means_[state]
+            diff = obs - mean
             try:
-                sign, logdet = np.linalg.slogdet(covar)
-                inv_covar    = np.linalg.inv(covar)
-                k            = len(obs)
-                log_probs[state] = -0.5 * (
-                    k * np.log(2 * np.pi) + logdet + diff @ inv_covar @ diff
-                )
-            except np.linalg.LinAlgError:
+                if self.covariance_type == "diag":
+                    cov = self.model.covars_[state]
+                    # hmmlearn >= 0.3 stores "diag" as (d,d); extract diagonal
+                    var = np.diag(cov) if cov.ndim == 2 else cov
+                    log_probs[state] = -0.5 * (
+                        log_2pi
+                        + np.sum(np.log(var + 1e-300))
+                        + np.sum(diff ** 2 / (var + 1e-300))
+                    )
+                elif self.covariance_type == "spherical":
+                    var = self.model.covars_[state]          # scalar
+                    log_probs[state] = -0.5 * (
+                        log_2pi
+                        + d * np.log(var + 1e-300)
+                        + np.dot(diff, diff) / (var + 1e-300)
+                    )
+                elif self.covariance_type == "tied":
+                    covar = self.model.covars_               # shape (d,d)
+                    sign, logdet = np.linalg.slogdet(covar)
+                    inv_covar    = np.linalg.inv(covar)
+                    log_probs[state] = -0.5 * (log_2pi + logdet + diff @ inv_covar @ diff)
+                else:  # "full"
+                    covar = self.model.covars_[state]        # shape (d,d)
+                    sign, logdet = np.linalg.slogdet(covar)
+                    inv_covar    = np.linalg.inv(covar)
+                    log_probs[state] = -0.5 * (log_2pi + logdet + diff @ inv_covar @ diff)
+            except (np.linalg.LinAlgError, FloatingPointError, ZeroDivisionError):
                 log_probs[state] = -np.inf
+
         return log_probs
 
     def _forward_step(self, obs: np.ndarray) -> np.ndarray:
@@ -333,10 +403,8 @@ class HMMEngine:
         # -- Filtro de estabilidad --
         is_confirmed = self._update_stability(label)
 
-        # -- Historial para Flicker --
+        # -- Historial para Flicker (deque con maxlen controla tamaño automáticamente) --
         self._regime_history.append(label)
-        if len(self._regime_history) > self.flicker_window:
-            self._regime_history.pop(0)
 
         return RegimeState(
             label=label,
@@ -398,6 +466,18 @@ class HMMEngine:
     # ------------------------------------------------------------------
     # Métodos auxiliares
     # ------------------------------------------------------------------
+
+    def warmup_forward(self, features_sequence: np.ndarray, warmup_bars: int = 60) -> None:
+        """
+        Calibra _log_alpha procesando las últimas N barras de la secuencia histórica.
+        Llamar tras load() en startup para evitar partir de la distribución prior fría.
+        """
+        if self.model is None:
+            raise RuntimeError("Modelo no cargado. Llama load() o train() primero.")
+        bars = features_sequence[-min(warmup_bars, len(features_sequence)):]
+        for obs in bars:
+            self._forward_step(obs)
+        logger.info("[HMMEngine] Warm-up forward: %d barras procesadas", len(bars))
 
     def predict_regime_proba(self) -> List[float]:
         """Distribución de probabilidad sobre todos los regímenes."""
