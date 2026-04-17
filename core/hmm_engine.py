@@ -175,8 +175,9 @@ class HMMEngine:
                     model = GaussianHMM(
                         n_components=n,
                         covariance_type=self.covariance_type,
-                        n_iter=200,
-                        tol=1e-4,
+                        n_iter=300,
+                        tol=1e-3,
+                        min_covar=1e-3,
                         random_state=attempt,
                         verbose=False,
                     )
@@ -226,23 +227,27 @@ class HMMEngine:
                 oos_model = GaussianHMM(
                     n_components=best_model.n_components,
                     covariance_type=self.covariance_type,
-                    n_iter=100,
+                    n_iter=200,
+                    tol=1e-3,
+                    min_covar=1e-3,
                     random_state=0,
                 )
                 oos_model.fit(X[:split])
-                is_ll  = oos_model.score(X[:split])
-                oos_ll = oos_model.score(X[split:])
-                ratio  = oos_ll / (abs(is_ll) + 1e-8)
+                is_ll       = oos_model.score(X[:split])
+                oos_ll      = oos_model.score(X[split:])
+                # Degradación relativa: qué tan peor es OOS respecto a IS.
+                # Ambas LLs son negativas (per-sample); is_ll > oos_ll cuando hay overfitting.
+                degradation = (is_ll - oos_ll) / (abs(is_ll) + 1e-8)
                 logger.info(
-                    "HMM OOS validation | n=%d | IS_ll=%.2f | OOS_ll=%.2f | ratio=%.3f",
-                    best_model.n_components, is_ll, oos_ll, ratio,
+                    "HMM OOS validation | n=%d | IS_ll=%.4f | OOS_ll=%.4f | degradacion=%.1f%%",
+                    best_model.n_components, is_ll, oos_ll, degradation * 100,
                 )
-                if ratio < 0.5:
+                if degradation > 0.30:
                     logger.warning(
-                        "HMM POSIBLE OVERFITTING: ratio OOS/IS=%.3f < 0.5 — "
+                        "HMM POSIBLE OVERFITTING: degradacion OOS=%.1f%% > 30%% — "
                         "modelo n=%d puede no generalizar en datos recientes. "
-                        "Considera ampliar datos históricos o reducir n_candidates.",
-                        ratio, best_model.n_components,
+                        "Considera ampliar datos historicos o reducir n_candidates.",
+                        degradation * 100, best_model.n_components,
                     )
             except Exception as exc:
                 logger.debug("OOS validation falló (no crítico): %s", exc)
@@ -471,6 +476,9 @@ class HMMEngine:
         """
         Calibra _log_alpha procesando las últimas N barras de la secuencia histórica.
         Llamar tras load() en startup para evitar partir de la distribución prior fría.
+
+        Solo actualiza _log_alpha — no toca _prev_label, _consecutive_bars ni
+        _regime_history, preservando así el estado de confirmación recuperado.
         """
         if self.model is None:
             raise RuntimeError("Modelo no cargado. Llama load() o train() primero.")
@@ -530,31 +538,47 @@ class HMMEngine:
     # ------------------------------------------------------------------
 
     def save(self) -> None:
-        """Guarda el modelo y metadatos en disco via pickle."""
+        """Guarda el modelo, metadatos y estado de inferencia en disco via pickle."""
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
         payload = {
-            "model":         self.model,
-            "n_regimes":     self.n_regimes,
-            "regime_labels": self.regime_labels,
-            "regime_order":  self.regime_order,
-            "regime_infos":  self.regime_infos,
-            "bic_score":     self.bic_score,
-            "trained_at":    self.trained_at,
+            # Modelo pesado y metadatos
+            "model":            self.model,
+            "n_regimes":        self.n_regimes,
+            "regime_labels":    self.regime_labels,
+            "regime_order":     self.regime_order,
+            "regime_infos":     self.regime_infos,
+            "bic_score":        self.bic_score,
+            "trained_at":       self.trained_at,
+            # Estado de inferencia — evita reiniciar conteo de confirmación en restart
+            "consecutive_bars": self._consecutive_bars,
+            "prev_label":       self._prev_label,
+            "pending_label":    self._pending_label,
+            "pending_count":    self._pending_count,
+            "regime_history":   list(self._regime_history),
+            "log_alpha":        self._log_alpha,
         }
         with open(self.model_path, "wb") as f:
             pickle.dump(payload, f)
-        logger.info("Modelo HMM guardado en %s", self.model_path)
+        logger.info(
+            "Modelo HMM guardado en %s | régimen=%s | barras_confirmadas=%d",
+            self.model_path, self._prev_label, self._consecutive_bars,
+        )
 
     def load(self) -> bool:
         """
-        Carga el modelo desde disco.
+        Carga el modelo y estado de inferencia desde disco.
         Retorna True si se cargó exitosamente, False si no existe.
+
+        Los campos de estado de inferencia usan .get() con valores por defecto
+        para mantener compatibilidad con pkl guardados antes de este fix.
         """
         if not os.path.exists(self.model_path):
             logger.info("No se encontró modelo guardado en %s", self.model_path)
             return False
         with open(self.model_path, "rb") as f:
             payload = pickle.load(f)
+
+        # Modelo pesado y metadatos
         self.model         = payload["model"]
         self.n_regimes     = payload["n_regimes"]
         self.regime_labels = payload["regime_labels"]
@@ -562,9 +586,26 @@ class HMMEngine:
         self.regime_infos  = payload["regime_infos"]
         self.bic_score     = payload["bic_score"]
         self.trained_at    = payload["trained_at"]
+
+        # Estado de inferencia (compatibilidad con pkl sin estas claves)
+        self._consecutive_bars = int(payload.get("consecutive_bars", 0))
+        self._prev_label       = payload.get("prev_label", None)
+        self._pending_label    = payload.get("pending_label", None)
+        self._pending_count    = int(payload.get("pending_count", 0))
+        self._log_alpha        = payload.get("log_alpha", None)
+
+        history_list         = payload.get("regime_history", [])
+        self._regime_history = collections.deque(history_list, maxlen=self.flicker_window)
+
+        confirmed = (
+            self._prev_label is not None
+            and self._consecutive_bars >= self.stability_bars
+        )
         logger.info(
-            "Modelo HMM cargado: n_regimes=%d, BIC=%.2f, entrenado=%s",
+            "Modelo HMM cargado: n_regimes=%d, BIC=%.2f, entrenado=%s | "
+            "régimen_previo=%s | barras_confirmadas=%d | confirmado=%s",
             self.n_regimes, self.bic_score, self.trained_at.isoformat(),
+            self._prev_label, self._consecutive_bars, confirmed,
         )
         return True
 

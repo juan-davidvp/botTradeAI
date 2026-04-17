@@ -11,26 +11,42 @@ broker:
   expected_cid: 34044505
   polling_interval_seconds: 30      # No hay WebSocket de fills
   active_instruments:
-    - 4238    # $270.00 | open: 637.10
-    - 14328   # $70.00  | open: 1853.51
-    - 9408    # $60.00  | open: 136.68
-    - 6218    # $60.00  | open: 432.00
-    - 2488    # $40.00  | open: 208.50
+# --- Tus posiciones actuales (Mantenlas para que el bot las gestione/venda) ---
+    - 4238    # VOO
+    - 14328   # MELI
+    - 9408    # PLTR
+    - 6218    # APP
+    - 2488    # DAVE
+    - 100000  # BTC (Bitcoin - ID aproximado de tu dashboard)
+    
+    # --- NUEVOS CANDIDATOS BALLENERA (IPO 2021-2025) ---
+    - 99001   # REEMPLAZAR POR EL ID REAL EN ETORO -> NU
+    - 99002   # REEMPLAZAR POR EL ID REAL EN ETORO -> RIVN
+    - 99003   # REEMPLAZAR POR EL ID REAL EN ETORO -> HOOD
+    - 99004   # REEMPLAZAR POR EL ID REAL EN ETORO -> DUOL
+    - 99005   # REEMPLAZAR POR EL ID REAL EN ETORO -> RDDT
   timeframe: "1Day"
   # Mapeo eToro instrumentID → ticker Yahoo Finance (para datos históricos)
   # El endpoint de candles de eToro no está disponible en la API pública v1.
   instrument_symbols:
-    4238:  "VOO"    # Vanguard S&P 500 ETF
-    14328: "MELI"   # MercadoLibre Inc  (.RTH → MELI en Yahoo)
-    9408:  "PLTR"   # Palantir Technologies (.RTH → PLTR en Yahoo)
-    6218:  "APP"    # Applovin Corp
-    2488:  "DAVE"   # Dave Inc.
+    4238:   "VOO"
+    14328:  "MELI"
+    9408:   "PLTR"
+    6218:   "APP"
+    2488:   "DAVE"
+    100000: "BTC-USD"
+    # --- Mapeo de Yahoo Finance para los nuevos candidatos ---
+    99001:  "NU"
+    99002:  "RIVN"
+    99003:  "HOOD"
+    99004:  "DUOL"
+    99005:  "RDDT"
 
 hmm:
-  n_candidates: [3, 4, 5, 6, 7]
-  n_init: 15
-  covariance_type: "full"
-  min_train_bars: 200
+  n_candidates: [3, 4, 5]
+  n_init: 20
+  covariance_type: "diag"
+  min_train_bars: 500
   stability_bars: 2
   flicker_window: 20
   flicker_threshold: 4
@@ -103,10 +119,13 @@ whale:
   min_confidence: 0.45              # confianza mínima para emitir señal Whale
   # Instrumentos objetivo para la pivotación (añadir en active_instruments también)
   # Criterios Ballenera: 1–5 años en bolsa, cap $300M–$50B
-  target_instruments:
-    - symbol: "DAVE"    # Dave Inc — ~$1B cap, 2021 IPO → Ballenera elegible
-    - symbol: "PLTR"    # Palantir — ~$50B cap, 2020 IPO → límite superior Ballenera
-    - symbol: "APP"     # AppLovin — ~$100B cap, 2021 IPO → Corto Plazo (demasiado grande)
+target_instruments:
+    - symbol: "DAVE"
+    - symbol: "NU"
+    - symbol: "RIVN"
+    - symbol: "HOOD"
+    - symbol: "DUOL"
+    - symbol: "RDDT"
 
 monitoring:
   dashboard_refresh_seconds: 30
