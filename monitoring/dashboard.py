@@ -29,18 +29,20 @@ from core.risk_manager import PortfolioState
 logger  = logging.getLogger(__name__)
 console = Console()
 
-INITIAL_EQUITY = 546.14
+INITIAL_EQUITY = 546.14   # equity al inicio del bot (2026-04-14) — base para ROI tracker
 TARGET_EQUITY  = 655.37
 TARGET_DAYS    = 120
 START_DATE     = datetime(2026, 4, 15, tzinfo=timezone.utc)
 MONTHLY_RATE   = 0.0466
 
-# Umbrales de riesgo en USD (sobre $546.14)
-DD_DAILY_REDUCE  =  10.92   # 2%
-DD_DAILY_HALT    =  16.38   # 3%
-DD_WEEKLY_REDUCE =  27.31   # 5%
-DD_WEEKLY_HALT   =  38.23   # 7%
-DD_PEAK_LOCK     =  54.61   # 10%
+# Umbrales de riesgo en USD calibrados sobre portfolio value actual (~$560.05).
+# Actualizar cuando risk.initial_equity cambie en settings.yaml.
+_CB_BASE         = 560.05
+DD_DAILY_REDUCE  = round(_CB_BASE * 0.02, 2)   # 2%  → $11.20
+DD_DAILY_HALT    = round(_CB_BASE * 0.03, 2)   # 3%  → $16.80
+DD_WEEKLY_REDUCE = round(_CB_BASE * 0.05, 2)   # 5%  → $28.00
+DD_WEEKLY_HALT   = round(_CB_BASE * 0.07, 2)   # 7%  → $39.20
+DD_PEAK_LOCK     = round(_CB_BASE * 0.10, 2)   # 10% → $56.01
 
 
 class Dashboard:
@@ -234,7 +236,7 @@ class Dashboard:
 
         t = Table.grid(padding=1)
         t.add_row(
-            f"Equity: [bold]${eq:.2f}[/bold]",
+            f"Portfolio Value: [bold]${eq:.2f}[/bold]",
             f"Objetivo: ${TARGET_EQUITY:.2f} (+20%)",
             f"Progreso: [{prog_color}]{progress:.1f}% / 20.0%[/{prog_color}]",
         )

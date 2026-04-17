@@ -166,27 +166,34 @@ class PositionTracker:
         for pos in raw:
             p = dict(pos)
 
-            pos_id    = str(p.get("positionID", ""))
-            instr_id  = str(p.get("instrumentID", ""))
+            # eToro API devuelve positionId / instrumentId (camelCase, d minúscula).
+            # Soportamos también PascalCase (positionID/instrumentID) para retro-compatibilidad.
+            pos_id    = str(p.get("positionId") or p.get("positionID", ""))
+            instr_id  = str(p.get("instrumentId") or p.get("instrumentID", ""))
             open_rate = float(p.get("openRate", 0))
             units     = float(p.get("units", 0))
 
-            # closeRate viene del endpoint /real/pnl y es el precio actual de mercado.
-            # Fallback: caché de rates del polling de precios → openRate como último recurso.
-            close_rate    = float(p.get("closeRate", 0))
-            rate_data     = self._current_prices.get(instr_id, {})
-            current_price = close_rate or float(rate_data.get("mid", open_rate))
-            p["current_price"] = current_price
+            # P&L no realizado: campo directo (spec) o anidado (guide).
+            api_pnl = self._get_pos_pnl(p)
+            p["unrealized_pnl"] = round(api_pnl, 2)
 
-            # pnL viene directamente del endpoint (ya incluye fees).
-            # Fallback: calcular desde unitsBaseValueDollars o desde precios.
-            api_pnl = p.get("pnL")
-            if api_pnl is not None:
-                p["unrealized_pnl"] = round(float(api_pnl), 2)
+            # Precio actual:
+            #  1. closeRate del endpoint /real/pnl (precio de cierre actual).
+            #  2. Caché de rates del polling de precios (instrumentId en minúscula).
+            #  3. Estimado desde openRate + pnL / units (cuando el mercado devuelve 0).
+            close_rate = float(p.get("closeRate", 0))
+            rate_data  = self._current_prices.get(instr_id, {})
+
+            if close_rate > 0 and close_rate != open_rate:
+                current_price = close_rate
+            elif rate_data:
+                current_price = float(rate_data.get("mid", open_rate))
+            elif units > 0 and api_pnl != 0:
+                current_price = round(open_rate + api_pnl / units, 4)
             else:
-                units_val = float(p.get("unitsBaseValueDollars", 0))
-                init_val  = float(p.get("initialAmountInDollars", open_rate * units))
-                p["unrealized_pnl"] = round(units_val - init_val, 2) if units_val else round((current_price - open_rate) * units, 2)
+                current_price = open_rate
+
+            p["current_price"] = current_price
 
             # Días en cartera
             open_dt = p.get("openDateTime", "")
@@ -214,7 +221,7 @@ class PositionTracker:
         """
         alerts = []
         for pos in positions:
-            pos_id  = int(pos.get("positionID", 0))
+            pos_id  = int(pos.get("positionId") or pos.get("positionID", 0))
             slr     = float(pos.get("stopLossRate", 0))
             no_stop = bool(pos.get("isNoStopLoss", False))
 
@@ -357,25 +364,31 @@ class PositionTracker:
         positions: List[Dict],
     ) -> float:
         """
-        Equity real = cash disponible + valor de mercado actual de cada posición.
+        Portfolio Value = cash disponible + capital invertido + P&L no realizado.
 
-        Fuente primaria: unitsBaseValueDollars (valor actual de mercado de las unidades)
-        que devuelve el endpoint /trading/info/real/pnl.
-        Fallback: initialAmountInDollars + pnL (mismo resultado, diferente campo).
-        Último recurso: credit + sum(amount) (valor de apertura, no de mercado).
+        Fórmula oficial eToro (calculate-equity guide):
+          equity = credit + Σ(positions[i].amount) + Σ(positions[i].pnL)
+
+        Nota: unitsBaseValueDollars == amount (inversión inicial, NO valor de mercado).
+        El P&L realizado se suma por separado desde el campo pnL / unrealizedPnL.pnL.
         """
         if positions:
-            market_value = 0.0
-            for p in positions:
-                ubv = p.get("unitsBaseValueDollars")
-                if ubv is not None:
-                    market_value += float(ubv)
-                else:
-                    # Fallback: inversión inicial + P&L reportado
-                    init = float(p.get("initialAmountInDollars", p.get("amount", 0)))
-                    pnl  = float(p.get("pnL", 0))
-                    market_value += init + pnl
-            return round(credit + market_value, 2)
+            total = sum(
+                float(p.get("amount", p.get("initialAmountInDollars", 0)))
+                + self._get_pos_pnl(p)
+                for p in positions
+            )
+            return round(credit + total, 2)
 
-        # Sin posiciones: equity = solo cash
         return round(credit, 2)
+
+    @staticmethod
+    def _get_pos_pnl(pos: Dict) -> float:
+        """Extrae el P&L no realizado de una posición (spec: pnL; guide: unrealizedPnL.pnL)."""
+        direct = pos.get("pnL")
+        if direct is not None:
+            return float(direct)
+        nested = pos.get("unrealizedPnL")
+        if isinstance(nested, dict):
+            return float(nested.get("pnL", 0))
+        return 0.0

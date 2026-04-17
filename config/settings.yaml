@@ -48,14 +48,14 @@ strategy:
   uncertainty_size_mult: 0.85        # Casi no reduce el tamaño de posición ante incertidumbre probabilística
 
 risk:
-  initial_equity: 546.14
+  initial_equity: 560.05            # portfolio value actualizado 2026-04-16
   target_equity: 655.37
   target_date: "2026-08-12"
-  max_risk_per_trade: 0.01          # 1% = $5.46
-  max_exposure: 0.92                # 92% = $502.45
+  max_risk_per_trade: 0.01          # 1% = $5.60
+  max_exposure: 0.92                # 92% = $515.25
   max_leverage: 1.0
-  max_single_position: 0.20         # 20% = $109.23
-  target_position_size_usd: 109.23
+  max_single_position: 0.20         # 20% = $112.01
+  target_position_size_usd: 112.01
   min_position_size_usd: 100.0
   max_concurrent: 5
   max_daily_trades: 10

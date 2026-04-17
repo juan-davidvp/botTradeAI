@@ -119,7 +119,7 @@ Log records are routed by `log_type` extra field:
 
 ### Capital calibration
 
-All monetary constants reference `$546.14` (real account as of 2026-04-14). If capital changes, update `risk.initial_equity` in `config/settings.yaml` — the code reads it at startup. Do not hardcode dollar amounts in new code; derive them as `equity * pct`.
+All monetary constants reference `$560.05` (real account as of 2026-04-16). If capital changes, update `risk.initial_equity` in `config/settings.yaml` — the code reads it at startup. Do not hardcode dollar amounts in new code; derive them as `equity * pct`.
 
 ### Real-money safety
 
@@ -180,7 +180,7 @@ All monetary constants reference `$546.14` (real account as of 2026-04-14). If c
 
 **`GET /api/v1/me`** — IS in the official OpenAPI spec. Returns `{ gcid, realCid, demoCid }`. The field name is `realCid` (camelCase, lowercase d).
 
-**`GET /api/v1/trading/info/real/pnl`** — Primary source for live equity and P&L. Response: `clientPortfolio.credit` (free cash) + `clientPortfolio.positions[]` each with `closeRate` (current price), `pnL` (unrealized P&L net of fees), `unitsBaseValueDollars` (current market value), `initialAmountInDollars` (cost basis). No `dailyPnl` or `weeklyPnl` fields exist — must be tracked internally.
+**`GET /api/v1/trading/info/real/pnl`** — Primary source for live equity and P&L. Response wrapped in `clientPortfolio`. Key fields: `credit` (free cash), `positions[]` each with `amount` (collateral at open), `pnL` (unrealized P&L — also accessible as `unrealizedPnL.pnL` in some response formats), `closeRate` (current market price), `unitsBaseValueDollars` (equals `amount`, NOT current market value — do NOT use alone for equity). Position IDs use camelCase lowercase `d`: `positionId`, `instrumentId`. Correct equity formula: `credit + Σ(amount) + Σ(pnL)`. No `dailyPnl` or `weeklyPnl` fields — must be tracked internally.
 
 **`GET /api/v1/trading/info/portfolio`** — Returns positions without P&L enrichment. Use only for order/mirror metadata, not for equity calculation.
 

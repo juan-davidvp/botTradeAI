@@ -72,7 +72,7 @@ class EToroClient:
     def _confirm_live_trading(self) -> None:
         confirm = input(
             "\n⚠️  LIVE TRADING EN ETORO — CUENTA REAL\n"
-            "   Capital: $546.14 USD\n"
+            "   Capital: $560.05 USD\n"
             "   Escribe 'CONFIRMO' para continuar: "
         ).strip()
         if confirm != "CONFIRMO":

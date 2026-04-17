@@ -212,8 +212,9 @@ def startup(settings: dict, dry_run: bool = False) -> dict:
     tracker.start()
     tracker.load_snapshot()
 
-    # ── Paso 9: SignalGenerator ─────────────────────────────────────────────
-    equity  = risk_settings.get("initial_equity", 546.14)
+    # ── Paso 9: SignalGenerator — usar equity en vivo del tracker ──────────
+    _ps    = tracker.get_portfolio_state()
+    equity = _ps.equity if (_ps and _ps.equity > 0) else risk_settings.get("initial_equity", 560.05)
     sig_gen = SignalGenerator(hmm_engine=hmm, equity=equity)
 
     # ── Paso 10: Dashboard y mensaje de inicio ──────────────────────────────
@@ -293,10 +294,14 @@ class MainLoop:
         signal.signal(signal.SIGTERM, self._shutdown_handler)
 
         # Estadísticas de sesión
-        self._session_start    = datetime.now(timezone.utc)
-        self._session_trades   = 0
-        self._session_pnl      = 0.0
-        self._equity_start     = self.settings["risk"].get("initial_equity", 546.14)
+        self._session_start  = datetime.now(timezone.utc)
+        self._session_trades = 0
+        self._session_pnl    = 0.0
+        _init_state          = self.tracker.get_portfolio_state()
+        self._equity_start   = (
+            _init_state.equity if (_init_state and _init_state.equity > 0)
+            else self.settings["risk"].get("initial_equity", 560.05)
+        )
 
     def run(self) -> None:
         logger.info("[MainLoop] Iniciando bucle de polling cada %ds", POLL_SECONDS)
