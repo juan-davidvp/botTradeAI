@@ -13,6 +13,7 @@ Campos obligatorios por entrada:
   timestamp, regime, probability, equity, positions_count, daily_pnl
 """
 
+import collections
 import json
 import logging
 import logging.handlers
@@ -25,9 +26,10 @@ from typing import Any, Dict, List, Optional
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
-LOG_DIR      = "logs"
-MAX_BYTES    = 10 * 1024 * 1024   # 10 MB
-BACKUP_COUNT = 30
+LOG_DIR        = "logs"
+MAX_BYTES      = 10 * 1024 * 1024   # 10 MB
+BACKUP_COUNT   = 30
+LOG_BUFFER_MAX = 500                  # entradas máximas en memoria
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,65 @@ class JsonFormatter(logging.Formatter):
         entry = {k: v for k, v in entry.items() if v is not None}
 
         return json.dumps(entry, ensure_ascii=False, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Handler en memoria — puente hacia la futura UI web
+# ---------------------------------------------------------------------------
+
+class MemoryLogHandler(logging.Handler):
+    """
+    Almacena las últimas LOG_BUFFER_MAX entradas de log en un deque en memoria.
+    Thread-safe (usa el lock interno de logging.Handler).
+    La futura API web lee este buffer sin tocar los archivos de disco.
+    """
+
+    def __init__(self, maxlen: int = LOG_BUFFER_MAX) -> None:
+        super().__init__()
+        self._buffer: collections.deque = collections.deque(maxlen=maxlen)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "level":     record.levelname,
+                "logger":    record.name,
+                "message":   record.getMessage(),
+                "log_type":  getattr(record, "log_type", "main"),
+            }
+            # Campos de contexto opcionales
+            for field in ("regime", "equity", "daily_pnl", "alert_type",
+                          "trade_id", "instrument_id", "circuit_breaker"):
+                val = getattr(record, field, None)
+                if val is not None:
+                    entry[field] = val
+            self._buffer.append(entry)
+        except Exception:
+            self.handleError(record)
+
+    def get_recent(self, n: int = 100, log_type: Optional[str] = None) -> List[Dict]:
+        """
+        Retorna hasta n entradas recientes.
+        Si log_type es 'trade', 'alert', 'regime' o 'main', filtra por tipo.
+        """
+        records = list(self._buffer)
+        if log_type:
+            records = [r for r in records if r.get("log_type") == log_type]
+        return records[-n:]
+
+
+# Instancia singleton — inicializada por setup_logging()
+_memory_handler: Optional[MemoryLogHandler] = None
+
+
+def get_recent_logs(n: int = 100, log_type: Optional[str] = None) -> List[Dict]:
+    """
+    Retorna las últimas n entradas del buffer en memoria.
+    Llamar desde la futura capa web (FastAPI/Flask) sin bloquear el bot.
+    """
+    if _memory_handler is None:
+        return []
+    return _memory_handler.get_recent(n=n, log_type=log_type)
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +227,12 @@ def setup_logging(monitoring_cfg: Optional[Dict] = None) -> None:
         datefmt="%H:%M:%S",
     ))
     root.addHandler(console_h)
+
+    # ── Buffer en memoria (puente hacia la futura UI web) ────────────────────
+    global _memory_handler
+    _memory_handler = MemoryLogHandler(maxlen=LOG_BUFFER_MAX)
+    _memory_handler.setLevel(logging.INFO)
+    root.addHandler(_memory_handler)
 
     # ── main.log — eventos generales ────────────────────────────────────────
     root.addHandler(_make_handler(

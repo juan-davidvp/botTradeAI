@@ -22,7 +22,6 @@ import logging
 import os
 import signal
 import sys
-import threading
 import time
 from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
@@ -44,14 +43,7 @@ from data.market_data      import MarketData
 from monitoring.logger     import setup_logging
 from monitoring.dashboard  import Dashboard
 from monitoring.alerts     import AlertManager
-
-# GUI opcional — no falla si PySide6 no está instalado
-try:
-    from PySide6.QtWidgets import QApplication
-    from monitoring.ui_manager import DataBridge, DashboardApp
-    _GUI_AVAILABLE = True
-except ImportError:
-    _GUI_AVAILABLE = False
+from monitoring.ui_manager import DataBridge
 
 logger = logging.getLogger(__name__)
 
@@ -238,11 +230,14 @@ def startup(settings: dict, dry_run: bool = False) -> dict:
         whale_settings=whale_cfg,
     )
 
-    # ── Paso 10: Dashboard y mensaje de inicio ──────────────────────────────
-    dashboard = Dashboard(settings=settings)
+    # ── Paso 10: Dashboard + DataBridge y mensaje de inicio ─────────────────
+    dashboard   = Dashboard(settings=settings)
+    data_bridge = DataBridge()
+
     portfolio_state = tracker.get_portfolio_state()
     if portfolio_state:
         dashboard.render(portfolio_state, hmm_state=None, signals=[])
+        data_bridge.push_portfolio(portfolio_state)
 
     logger.info(
         "System online — eToro %s | equity: $%.2f | instrumentos: %s",
@@ -258,6 +253,7 @@ def startup(settings: dict, dry_run: bool = False) -> dict:
         "order_executor":  order_executor,
         "signal_generator":sig_gen,
         "dashboard":       dashboard,
+        "data_bridge":     data_bridge,
         "alert_manager":   alert_mgr,
         "settings":        settings,
         "instrument_ids":  instrument_ids,
@@ -285,7 +281,7 @@ class MainLoop:
       9. Refrescar dashboard.
     """
 
-    def __init__(self, ctx: dict, bridge: Optional[object] = None):
+    def __init__(self, ctx: dict):
         self.ctx           = ctx
         self.client        : EToroClient     = ctx["client"]
         self.market_data   : MarketData      = ctx["market_data"]
@@ -300,8 +296,8 @@ class MainLoop:
         self.instrument_ids: List[int]       = ctx["instrument_ids"]
         self.dry_run       : bool            = ctx["dry_run"]
 
-        # DataBridge para la GUI PySide6 (None si no hay GUI activa)
-        self._bridge = bridge
+        # DataBridge: store central para la futura UI web
+        self._bridge: DataBridge = ctx["data_bridge"]
 
         self._running          : bool             = True
         self._last_regime_date : Optional[date]   = None
@@ -556,24 +552,37 @@ class MainLoop:
     # ------------------------------------------------------------------
 
     def _refresh_dashboard(self, portfolio_state: PortfolioState) -> None:
-        # GUI PySide6: push thread-safe via DataBridge signals
-        if self._bridge is not None:
+        # Actualizar DataBridge y persistir a live_state.json
+        try:
+            self._bridge.push_portfolio(portfolio_state)
+            # Calcular flicker: número de transiciones de régimen en la ventana
             try:
-                self._bridge.push_portfolio(portfolio_state)
-                self._bridge.push_regime(self._regime_state)
-                self._bridge.push_connection(True)
-            except Exception as exc:
-                logger.debug("[MainLoop] Error enviando datos a GUI: %s", exc)
-        else:
-            # Fallback: Rich terminal dashboard
-            try:
-                self.dashboard.render(
-                    portfolio_state = portfolio_state,
-                    hmm_state       = self._regime_state,
-                    signals         = [],
+                h = list(self.hmm._regime_history)
+                flicker_transitions = sum(
+                    1 for i in range(1, len(h)) if h[i] != h[i - 1]
                 )
-            except Exception as exc:
-                logger.debug("[MainLoop] Error en dashboard: %s", exc)
+                flicker_window = getattr(self.hmm, "flicker_window", 20)
+            except Exception:
+                flicker_transitions, flicker_window = 0, 20
+            self._bridge.push_regime(
+                self._regime_state,
+                flicker_count=flicker_transitions,
+                flicker_window=flicker_window,
+            )
+            self._bridge.push_connection(True)
+            self._bridge.flush()   # escribe live_state.json para el dashboard Streamlit
+        except Exception as exc:
+            logger.debug("[MainLoop] Error actualizando DataBridge: %s", exc)
+
+        # Log de una línea en terminal
+        try:
+            self.dashboard.render(
+                portfolio_state=portfolio_state,
+                hmm_state=self._regime_state,
+                signals=[],
+            )
+        except Exception as exc:
+            logger.debug("[MainLoop] Error en dashboard stub: %s", exc)
 
     # ------------------------------------------------------------------
     # Guardar estado
@@ -593,11 +602,6 @@ class MainLoop:
         logger.info("[MainLoop] Señal %d recibida — iniciando shutdown seguro...", signum)
         self._running = False
         self._shutdown()
-        # Cerrar Qt si está activo (thread-safe: QApplication.quit es reentrant)
-        if _GUI_AVAILABLE:
-            app = QApplication.instance()
-            if app is not None:
-                app.quit()
 
     def _shutdown(self) -> None:
         logger.info("[MainLoop] SHUTDOWN — NO se cierran posiciones (stops activos en broker)")
@@ -785,6 +789,7 @@ def main() -> None:
     ctx  = startup(settings, dry_run=args.dry_run)
     loop = MainLoop(ctx)
     loop.run()
+
 
 
 if __name__ == "__main__":
