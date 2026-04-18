@@ -25,6 +25,11 @@ broker:
     - 99003   # REEMPLAZAR POR EL ID REAL EN ETORO -> HOOD
     - 99004   # REEMPLAZAR POR EL ID REAL EN ETORO -> DUOL
     - 99005   # REEMPLAZAR POR EL ID REAL EN ETORO -> RDDT
+    - 99006   # REEMPLAZAR POR EL ID REAL EN ETORO -> ALAB (Astera Labs)
+    - 99007   # REEMPLAZAR POR EL ID REAL EN ETORO -> CAVA (CAVA Group)
+    - 99008   # REEMPLAZAR POR EL ID REAL EN ETORO -> FIG  (Fortis Inc.)
+    - 99009   # REEMPLAZAR POR EL ID REAL EN ETORO -> CRCL (Circle Internet Financial)
+    - 99010   # REEMPLAZAR POR EL ID REAL EN ETORO -> OMDA (Omada Health)
   timeframe: "1Day"
   # Mapeo eToro instrumentID → ticker Yahoo Finance (para datos históricos)
   # El endpoint de candles de eToro no está disponible en la API pública v1.
@@ -41,6 +46,11 @@ broker:
     99003:  "HOOD"
     99004:  "DUOL"
     99005:  "RDDT"
+    99006:  "ALAB"
+    99007:  "CAVA"
+    99008:  "FIG"
+    99009:  "CRCL"
+    99010:  "OMDA"
 
 hmm:
   n_candidates: [3, 4, 5]
@@ -126,6 +136,11 @@ target_instruments:
     - symbol: "HOOD"
     - symbol: "DUOL"
     - symbol: "RDDT"
+    - symbol: "ALAB"
+    - symbol: "CAVA"
+    - symbol: "FIG"
+    - symbol: "CRCL"
+    - symbol: "OMDA"
 
 monitoring:
   dashboard_refresh_seconds: 30

@@ -1,0 +1,34 @@
+[
+  {
+    "ts": "2026-04-18T17:41:43.435269+00:00",
+    "kind": "market_closed",
+    "icon": "🌙",
+    "text": "El mercado está **cerrado**. Mantendré un ojo en las posiciones abiertas y reanudaré el análisis completo cuando abra.",
+    "level": "info",
+    "label": "Mercado cerrado"
+  },
+  {
+    "ts": "2026-04-18T17:41:36.852972+00:00",
+    "kind": "bot_startup",
+    "icon": "🚀",
+    "text": "Sistema iniciado en modo **Real** (REAL). Cargando modelo de análisis de mercado y conectando a eToro. Estaré listo para operar en segundos.",
+    "level": "success",
+    "label": "Sistema iniciado"
+  },
+  {
+    "ts": "2026-04-18T17:20:28.915182+00:00",
+    "kind": "market_closed",
+    "icon": "🌙",
+    "text": "El mercado está **cerrado**. Mantendré un ojo en las posiciones abiertas y reanudaré el análisis completo cuando abra.",
+    "level": "info",
+    "label": "Mercado cerrado"
+  },
+  {
+    "ts": "2026-04-18T17:20:22.359086+00:00",
+    "kind": "bot_startup",
+    "icon": "🚀",
+    "text": "Sistema iniciado en modo **Real** (REAL). Cargando modelo de análisis de mercado y conectando a eToro. Estaré listo para operar en segundos.",
+    "level": "success",
+    "label": "Sistema iniciado"
+  }
+]

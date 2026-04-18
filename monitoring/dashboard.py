@@ -46,6 +46,16 @@ INSTRUMENT_NAMES: Dict[int, str] = {
     6218:   "APP · AppLovin",
     2488:   "DAVE · Dave Inc.",
     100000: "BTC/USD",
+    99001:  "NU · Nu Holdings",
+    99002:  "RIVN · Rivian",
+    99003:  "HOOD · Robinhood",
+    99004:  "DUOL · Duolingo",
+    99005:  "RDDT · Reddit",
+    99006:  "ALAB · Astera Labs",
+    99007:  "CAVA · CAVA Group",
+    99008:  "FIG · Fortis Inc.",
+    99009:  "CRCL · Circle Internet",
+    99010:  "OMDA · Omada Health",
 }
 
 REGIME_COPY: Dict[str, Dict[str, str]] = {
@@ -160,6 +170,92 @@ def _load_log_lines(log_path: str, n: int = 40) -> List[Dict]:
         return []
 
 
+def _load_user_messages(path: str, n: int = 20) -> List[Dict]:
+    """Lee los últimos n mensajes del Canal de Comunicación Directa."""
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data[:n] if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _md_to_html(text: str) -> str:
+    """Convierte **bold** y _italic_ a HTML para renderizado en el chat."""
+    import re
+    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+    text = re.sub(r'_([^_]+?)_', r'<em>\1</em>', text)
+    return text
+
+
+def _relative_time(iso_ts: str) -> str:
+    """Convierte un timestamp ISO-8601 a tiempo relativo en español."""
+    try:
+        dt  = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+        sec = int((datetime.now(timezone.utc) - dt).total_seconds())
+        if sec < 60:
+            return "Ahora mismo"
+        if sec < 3600:
+            m = sec // 60
+            return f"Hace {m} min"
+        if sec < 86400:
+            h = sec // 3600
+            return f"Hace {h} h"
+        d = sec // 86400
+        return f"Hace {d} días"
+    except Exception:
+        return "—"
+
+
+_CHAT_LEVEL_STYLES = {
+    "info":    ("rgba(90,215,232,0.07)",  "rgba(90,215,232,0.18)",  "#5ad7e8"),
+    "success": ("rgba(16,185,129,0.07)",  "rgba(16,185,129,0.25)",  "#10B981"),
+    "warning": ("rgba(255,183,135,0.07)", "rgba(255,183,135,0.25)", "#ffb787"),
+    "danger":  ("rgba(255,180,171,0.07)", "rgba(255,180,171,0.25)", "#ffb4ab"),
+}
+
+
+def _build_chat_bubbles(msgs: List[Dict]) -> str:
+    """Construye el HTML de burbujas del canal de comunicación."""
+    if not msgs:
+        return (
+            '<div style="text-align:center;padding:28px 0;color:#3d494b;font-size:12px;">'
+            '💬 El bot aún no ha enviado mensajes. Estará activo cuando el motor inicie.'
+            '</div>'
+        )
+    html = ""
+    for idx, m in enumerate(msgs):
+        ts_str    = m.get("ts", "")
+        icon      = m.get("icon", "💬")
+        text_raw  = m.get("text", "")
+        level     = m.get("level", "info")
+        label     = m.get("label") or m.get("kind", "").replace("_", " ").title()
+        rel_time  = _relative_time(ts_str)
+        text_html = _md_to_html(
+            text_raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
+        bg, border, color = _CHAT_LEVEL_STYLES.get(level, _CHAT_LEVEL_STYLES["info"])
+        anim = (
+            f"animation:fadeSlideIn 0.45s ease-out {idx * 0.06:.2f}s both;"
+            if idx < 3 else ""
+        )
+        html += (
+            f'<div style="{anim}background:{bg};border:1px solid {border};'
+            f'border-radius:10px;padding:13px 16px;margin-bottom:2px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">'
+            f'<span style="font-size:12px;font-weight:600;color:{color};">'
+            f'{icon}&nbsp; {label}</span>'
+            f'<span style="font-size:9px;font-family:\'Roboto Mono\',monospace;color:#bcc9cb;">'
+            f'{rel_time}</span>'
+            f'</div>'
+            f'<div style="font-size:12.5px;color:#c8d0d3;line-height:1.65;">{text_html}</div>'
+            f'</div>\n'
+        )
+    return html
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -176,12 +272,12 @@ if __name__ == "__main__":
         initial_sidebar_state="collapsed",
     )
 
-    # ── Auto-refresco cada 5 s ────────────────────────────────────────────────
+    # ── Auto-refresco cada 30 s (ciclo del bot) — el chat usa @st.fragment ──────
     try:
         from streamlit_autorefresh import st_autorefresh
-        st_autorefresh(interval=5_000, key="bot_refresh")
+        st_autorefresh(interval=30_000, key="bot_refresh")
     except ImportError:
-        st.markdown('<meta http-equiv="refresh" content="5">', unsafe_allow_html=True)
+        st.markdown('<meta http-equiv="refresh" content="30">', unsafe_allow_html=True)
 
     # ── Cargar datos ──────────────────────────────────────────────────────────
     _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -222,12 +318,17 @@ if __name__ == "__main__":
 
     if equity == 0:
         equity = init_equity
-    since_start    = equity - init_equity
     total_invested = sum(float(p.get("amount", 0) or 0) for p in positions)
+    total_upnl     = sum(float(p.get("unrealized_pnl", 0) or 0) for p in positions)
+    equity_display = total_invested + total_upnl
+    if equity_display == 0:
+        equity_display = init_equity
+    target_display = total_invested * 0.20
+    since_start    = equity_display - init_equity
     allocation_pct = (total_invested / (total_invested + cash) * 100) if equity > 0 else 0.0
     dd_abs         = abs(drawdown_pct * peak_equity) if peak_equity > 0 else max(0.0, peak_equity - equity)
     progress_pct   = max(0.0, min(100.0,
-        (equity - init_equity) / (target_equity - init_equity) * 100
+        (equity_display - init_equity) / (target_equity - init_equity) * 100
     )) if target_equity > init_equity else 0.0
 
     now_utc    = datetime.now(timezone.utc)
@@ -252,7 +353,7 @@ if __name__ == "__main__":
     days_left      = max(0, days_total - days_elapsed)
     months_elapsed = days_elapsed / 30.44
     target_today   = init_equity * ((1 + MONTHLY_RATE) ** months_elapsed)
-    on_track       = equity >= target_today
+    on_track       = equity_display >= target_today
     prob_bar       = int(regime_prob * 100)
 
     # ── Helpers de color ─────────────────────────────────────────────────────
@@ -356,7 +457,7 @@ if __name__ == "__main__":
             amt = float(pos.get("amount", 0) or 0)
             conc_items[iid] = conc_items.get(iid, 0) + amt
         for iid, amt in sorted(conc_items.items(), key=lambda x: x[1], reverse=True):
-            pct   = amt / total_invested * 100
+            pct   = amt / (total_invested + cash) * 100 if (total_invested + cash) > 0 else 0.0
             cname = INSTRUMENT_NAMES.get(iid, f"#{iid}").split("·")[0].strip()
             if pct > 20:
                 bc, bb, bbd = "#ffb4ab", "rgba(255,180,171,0.1)", "rgba(255,180,171,0.3)"
@@ -432,6 +533,7 @@ if __name__ == "__main__":
     if not terminal_html:
         terminal_html = '<div style="color:#3d494b;font-style:italic;">Sin registros en esta sesión.</div>'
 
+    # ── Construir HTML del Canal de Comunicación Directa ──────────────────────
     # ── Bot launcher (Streamlit nativo — antes del bloque HTML) ───────────────
     if not alive:
         col_w, col_b, _ = st.columns([4, 1, 1])
@@ -496,6 +598,23 @@ section[data-testid="stAppViewContainer"] {
   font-size: 18px;
 }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0);     }
+}
+details > summary {
+  cursor:pointer; list-style:none; user-select:none;
+  padding:12px 20px;
+  display:flex; align-items:center; gap:8px;
+  font-size:10px; font-weight:600; color:var(--osv);
+  text-transform:uppercase; letter-spacing:1.5px;
+  background:var(--card);
+  border:1px solid var(--ol); border-radius:12px;
+  transition: background 0.2s;
+}
+details > summary:hover { background: rgba(255,255,255,0.04); }
+details[open] > summary { border-radius:12px 12px 0 0; border-bottom:none; }
+details[open] > .term-body { border-radius:0 0 12px 12px; }
 .gc {
   background: var(--card);
   background-image: linear-gradient(135deg,rgba(255,255,255,0.05) 0%,transparent 100%);
@@ -525,8 +644,11 @@ section[data-testid="stAppViewContainer"] {
 </style>
 """, unsafe_allow_html=True)
 
-    # ── Renderizado principal — usa st.html() en Streamlit ≥ 1.31 ─────────────
-    _dash_html = f"""
+    # ── Renderizado principal ─────────────────────────────────────────────────
+    # _dash_top: NAV + HMM HERO + MAIN GRID   (refresca cada 30 s)
+    # _chat_panel: Canal de Comunicación      (fragment independiente, 5 s)
+    # _dash_bottom: TERMINAL + FOOTER         (refresca cada 30 s)
+    _dash_top = f"""
 <!-- ═══ TOP NAV ═══════════════════════════════════════════════════════════ -->
 <nav style="position:fixed;top:0;left:0;width:100%;z-index:9999;
   display:flex;justify-content:space-between;align-items:center;
@@ -601,8 +723,8 @@ section[data-testid="stAppViewContainer"] {
     <div class="gc" style="padding:20px;position:relative;overflow:hidden;">
       <div style="position:absolute;right:-10px;top:-10px;width:72px;height:72px;background:rgba(90,215,232,0.05);border-radius:50%;filter:blur(18px);"></div>
       <span style="font-size:10px;font-weight:500;color:var(--osv);text-transform:uppercase;letter-spacing:1px;">Equity Actual</span>
-      <div style="font-size:30px;font-weight:700;font-family:var(--fm);color:var(--os);margin:5px 0 3px;">${equity:,.2f}</div>
-      <div style="font-size:11px;font-family:var(--fm);color:var(--osv);">Obj: <span style="color:var(--pr);">${target_equity:,.2f}</span></div>
+      <div style="font-size:30px;font-weight:700;font-family:var(--fm);color:var(--os);margin:5px 0 3px;">${equity_display:,.2f}</div>
+      <div style="font-size:11px;font-family:var(--fm);color:var(--osv);">Obj +20%: <span style="color:var(--pr);">${target_display:,.2f}</span></div>
     </div>
 
     <div class="gc" style="padding:16px 20px;">
@@ -777,14 +899,19 @@ section[data-testid="stAppViewContainer"] {
   </div><!-- /RIGHT -->
 
 </div><!-- /MAIN GRID -->
+"""
 
-<!-- ═══ TERMINAL ══════════════════════════════════════════════════════════ -->
+    _dash_bottom = f"""
+<!-- ═══ TERMINAL ════════════════════════════════════════════════════════ -->
 <div class="gc" style="margin-bottom:44px;overflow:hidden;">
-  <div style="padding:12px 20px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:8px;">
-    <span class="msym" style="font-size:16px;color:var(--osv);">terminal</span>
-    <span style="font-size:10px;font-weight:600;color:var(--os);text-transform:uppercase;letter-spacing:1.5px;">Terminal — Log del Sistema</span>
+  <div style="padding:12px 20px;border-bottom:1px solid rgba(255,255,255,0.08);
+    display:flex;align-items:center;gap:8px;">
+    <span class="msym" style="font-size:16px;color:#bcc9cb;">terminal</span>
+    <span style="font-size:10px;font-weight:600;color:#dee3e4;
+      text-transform:uppercase;letter-spacing:1.5px;">Logs Técnicos del Sistema</span>
   </div>
-  <div style="padding:14px 20px;background:#080E1F;font-family:var(--fm);font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6;">
+  <div style="padding:14px 20px;background:#080E1F;font-family:'Roboto Mono',monospace;
+    font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6;">
     {terminal_html}
   </div>
 </div>
@@ -804,9 +931,45 @@ section[data-testid="stAppViewContainer"] {
 </footer>
 """
 
-    # st.html() (Streamlit ≥ 1.31) renderiza HTML puro sin procesar markdown.
-    # En versiones anteriores usamos st.markdown con unsafe_allow_html=True.
-    if hasattr(st, "html"):
-        st.html(_dash_html)
-    else:
-        st.markdown(_dash_html, unsafe_allow_html=True)
+    # ── Fragment: Canal de Comunicación (refresca sólo este bloque cada 5 s) ──
+    @st.fragment(run_every=5)
+    def _chat_panel() -> None:
+        # Carga de datos propia del fragment (independiente del ciclo principal)
+        _fstate    = _load_live_state(os.path.join(_ROOT, "live_state.json"))
+        _falive    = _bot_alive(_fstate)
+        _fdot      = "#5ad7e8" if _falive else "#ffb4ab"
+        _fmsgs     = _load_user_messages(os.path.join(_ROOT, "user_messages.json"), n=20)
+        _fn        = len(_fmsgs)
+        _fbubbles  = _build_chat_bubbles(_fmsgs)
+
+        st.html(f"""
+<div class="gc" style="margin-bottom:18px;overflow:hidden;">
+  <div style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.08);
+    display:flex;align-items:center;gap:10px;">
+    <span class="msym" style="font-size:18px;color:#5ad7e8;">chat</span>
+    <span style="font-size:11px;font-weight:700;color:#dee3e4;
+      text-transform:uppercase;letter-spacing:1.5px;">Canal de Comunicación · AgentBot</span>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:8px;
+      padding:3px 10px;background:rgba(255,255,255,0.05);
+      border:1px solid rgba(255,255,255,0.1);border-radius:20px;">
+      <span style="width:5px;height:5px;border-radius:50%;
+        background:{_fdot};display:inline-block;
+        animation:pulse 2s infinite;"></span>
+      <span style="font-size:9px;font-family:'Roboto Mono',monospace;color:#bcc9cb;
+        text-transform:uppercase;letter-spacing:1px;">Tiempo real</span>
+    </div>
+    <span style="margin-left:auto;font-size:9px;font-family:'Roboto Mono',monospace;color:#bcc9cb;">
+      {_fn} mensajes
+    </span>
+  </div>
+  <div style="padding:16px 18px;display:flex;flex-direction:column;gap:8px;
+    max-height:440px;overflow-y:auto;">
+    {_fbubbles}
+  </div>
+</div>
+""")
+
+    # ── Renderizado secuencial ─────────────────────────────────────────────────
+    st.html(_dash_top)
+    _chat_panel()
+    st.html(_dash_bottom)

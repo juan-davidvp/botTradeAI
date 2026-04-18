@@ -40,10 +40,11 @@ from core.risk_manager     import RiskManager, PortfolioState
 from core.signal_generator import SignalGenerator
 from data.feature_engineering import build_features
 from data.market_data      import MarketData
-from monitoring.logger     import setup_logging
-from monitoring.dashboard  import Dashboard
-from monitoring.alerts     import AlertManager
-from monitoring.ui_manager import DataBridge
+from monitoring.logger          import setup_logging
+from monitoring.dashboard       import Dashboard
+from monitoring.alerts          import AlertManager
+from monitoring.ui_manager      import DataBridge
+from monitoring.user_communicator import get_communicator
 
 logger = logging.getLogger(__name__)
 
@@ -321,8 +322,15 @@ class MainLoop:
             else self.settings["risk"].get("initial_equity", 560.05)
         )
 
+        # Canal de Comunicación Directa
+        self._comm           = get_communicator()
+        self._prev_cb_status = "OK"
+
     def run(self) -> None:
         logger.info("[MainLoop] Iniciando bucle de polling cada %ds", POLL_SECONDS)
+        env  = self.settings.get("broker", {}).get("environment", "simulación").upper()
+        mode = "Dry-Run" if self.dry_run else "Real"
+        self._comm.emit("bot_startup", mode=mode, env=env)
         while self._running:
             tick_start = time.time()
             try:
@@ -371,6 +379,10 @@ class MainLoop:
             portfolio_state.equity,
             regime=self._regime_state.label if self._regime_state else "UNKNOWN",
         )
+        if cb_status != self._prev_cb_status:
+            dd_usd = max(0.0, -portfolio_state.daily_pnl)
+            self._comm.emit("circuit_breaker", status=cb_status, dd_usd=dd_usd)
+            self._prev_cb_status = cb_status
         if cb_status in ("HALT", "LOCKED"):
             logger.warning("[MainLoop] Circuit breaker %s — sin señales este tick", cb_status)
             self._refresh_dashboard(portfolio_state)
@@ -389,7 +401,14 @@ class MainLoop:
 
         # ── 6. Generar y ejecutar señales ────────────────────────────────────
         if self._regime_state and is_market_open(self.instrument_ids):
+            self._comm.emit(
+                "scan_start",
+                n_instruments=len(self.instrument_ids),
+                regime=self._regime_state.label,
+            )
             self._process_signals(portfolio_state, rates)
+        elif self._regime_state and not is_market_open(self.instrument_ids):
+            self._comm.emit("market_closed")
 
         # ── 7. Refrescar dashboard ────────────────────────────────────────────
         self._refresh_dashboard(portfolio_state)
@@ -443,6 +462,12 @@ class MainLoop:
 
             if old_label and old_label != regime_state.label:
                 self.alert_mgr.send_regime_change(old_label, regime_state.label, regime_state.probability)
+                self._comm.emit(
+                    "regime_change",
+                    old=old_label,
+                    new=regime_state.label,
+                    prob=regime_state.probability,
+                )
 
             if self.hmm.is_flickering():
                 self.alert_mgr.send_flicker_alert(self.hmm._regime_history)
@@ -474,6 +499,7 @@ class MainLoop:
             self.hmm.train(features.values)
             self.hmm.save()
             self.alert_mgr.send_hmm_retrained(self.hmm.n_regimes, self.hmm.bic_score)
+            self._comm.emit("hmm_retrained", n_regimes=self.hmm.n_regimes, bic_score=self.hmm.bic_score)
             logger.info("[MainLoop] HMM re-entrenado: n=%d BIC=%.2f", self.hmm.n_regimes, self.hmm.bic_score)
         except Exception as exc:
             logger.error("[MainLoop] Error en re-entrenamiento HMM: %s", exc)
@@ -490,10 +516,14 @@ class MainLoop:
           3. Validar con RiskManager.
           4. Ejecutar si aprobada.
         """
+        _analyzed   = 0   # instrumentos con barras suficientes
+        _any_signal = False
+
         for instr_id in self.instrument_ids:
             bars = self._bars_cache.get(instr_id)
             if bars is None or len(bars) < 60:
                 continue
+            _analyzed += 1
 
             spread = self.market_data.calculate_spread_pct(instr_id)
 
@@ -508,6 +538,15 @@ class MainLoop:
             if signal is None:
                 continue
 
+            # ── Comunicar señal detectada ────────────────────────────────────
+            _any_signal = True
+            self._comm.emit(
+                "signal_found",
+                symbol=str(instr_id),
+                strategy=signal.strategy_name,
+                confidence=signal.confidence,
+            )
+
             decision = self.risk_manager.validate_signal(
                 signal          = signal,
                 portfolio_state = portfolio_state,
@@ -519,6 +558,18 @@ class MainLoop:
                     "[MainLoop] Señal rechazada instrID=%d: %s",
                     instr_id, decision.rejection_reason,
                 )
+                self._comm.emit(
+                    "signal_rejected",
+                    symbol=str(instr_id),
+                    reason=decision.rejection_reason,
+                    cash=portfolio_state.cash,
+                    n_pos=len(portfolio_state.positions),
+                    max_pos=self.risk_manager.max_concurrent,
+                    max_trades=self.risk_manager.max_daily_trades,
+                    daily_count=portfolio_state.daily_trades_count,
+                    cb_status=portfolio_state.circuit_breaker_status,
+                    size=signal.position_size_usd,
+                )
                 continue
 
             final_signal = decision.modified_signal
@@ -526,6 +577,13 @@ class MainLoop:
                 "[MainLoop] Señal APROBADA instrID=%d | size=$%.2f | stop=%.4f | %s",
                 instr_id, final_signal.position_size_usd,
                 final_signal.stop_loss, final_signal.strategy_name,
+            )
+            self._comm.emit(
+                "signal_approved",
+                symbol=str(instr_id),
+                size=final_signal.position_size_usd,
+                strategy=final_signal.strategy_name,
+                modifications=decision.modifications_list,
             )
 
             result = self.executor.submit_order(final_signal)
@@ -540,12 +598,34 @@ class MainLoop:
                     "[MainLoop] ORDEN EJECUTADA | trade_id=%s | posID=%s | instrID=%d",
                     result.trade_id, result.position_id, instr_id,
                 )
+                self._comm.emit(
+                    "order_executed",
+                    symbol=str(instr_id),
+                    price=final_signal.entry_price,
+                    stop=final_signal.stop_loss,
+                    size=final_signal.position_size_usd,
+                )
             else:
                 logger.error(
                     "[MainLoop] ORDEN FALLIDA | instrID=%d | error=%s",
                     instr_id, result.error,
                 )
                 self.alert_mgr.send_system_error(f"Orden fallida instrID={instr_id}: {result.error}")
+                self._comm.emit("order_failed", symbol=str(instr_id), error=result.error)
+
+        # ── Sin señales en ningún instrumento ────────────────────────────────
+        if not _any_signal and _analyzed > 0:
+            from monitoring.user_communicator import INSTRUMENT_NAMES as _INAMES
+            names = [
+                _INAMES.get(i, str(i)).split("(")[0].strip()
+                for i in self.instrument_ids[:3]
+            ]
+            suffix = "…" if len(self.instrument_ids) > 3 else ""
+            self._comm.emit(
+                "no_signals",
+                instruments=", ".join(names) + suffix,
+                regime=self._regime_state.label if self._regime_state else "—",
+            )
 
     # ------------------------------------------------------------------
     # Dashboard
